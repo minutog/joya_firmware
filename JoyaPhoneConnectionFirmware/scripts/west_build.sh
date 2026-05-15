@@ -6,7 +6,7 @@ WORKSPACE_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 NCS_ROOT="${NCS_ROOT:-/opt/nordic/ncs/v2.9.1}"
 NCS_TOOLCHAIN_BIN="${NCS_TOOLCHAIN_BIN:-/opt/nordic/ncs/toolchains/b8efef2ad5/bin}"
-APP_LINK="${APP_LINK:-/tmp/joya_pairing_fw}"
+APP_LINK="${APP_LINK:-/tmp/joya_phone_connection_fw}"
 BOARD="${BOARD:-nrf52dk/nrf52832}"
 
 if [ ! -d "${NCS_ROOT}" ]; then

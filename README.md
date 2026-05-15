@@ -1,6 +1,6 @@
-# Joya Firmware
+# Joya Phone Connection
 
-Firmware and test app workspace for the Joya BLE safety wristband prototype.
+BLE phone-connection firmware and test app workspace for the Joya safety wristband prototype.
 
 ## Hardware Target
 
@@ -11,15 +11,15 @@ Firmware and test app workspace for the Joya BLE safety wristband prototype.
 
 ## Repository Layout
 
-- `JoyaFirmware/` - Zephyr/Nordic NCS firmware used to flash the PCB and test BLE pairing/reconnect.
-- `JoyaFirmwareTest/` - iOS demo app workspace. Later we will evolve this into the Flux-based test app path.
+- `JoyaPhoneConnectionFirmware/` - Zephyr/Nordic NCS firmware focused only on phone pairing, claiming, reconnect, and button event transport.
+- `JoyaPhoneConnectionApp/` - iOS demo app workspace for testing the phone connection flow. Later we can evolve this into the Flux-based test app path.
 - `ReferenciaInicial.c` - readable product-state reference/pseudocode.
 - `PreviousTest/` - earlier hardware test reference. Build outputs are intentionally ignored.
 - `docs/` - protocol notes and firmware/app connection design.
 
-## Current Firmware Goal
+## Current Scope
 
-The current firmware is a first BLE connection test, not the final safety-product firmware. It focuses on:
+This is not the full safety-product firmware. It is the isolated Joya-phone connection slice, so Julieta can build the rest of the firmware without confusing this test harness with the final product logic. It focuses on:
 
 - Advertising as `Joya Setup` while unclaimed.
 - Accepting a simple app-level `CLAIM:<app_id>` command over Nordic UART Service.
@@ -31,7 +31,7 @@ Important BLE model: Joya is the BLE peripheral. The phone app is the BLE centra
 
 ## Build
 
-From `JoyaFirmware/`:
+From `JoyaPhoneConnectionFirmware/`:
 
 ```sh
 ./scripts/west_build.sh

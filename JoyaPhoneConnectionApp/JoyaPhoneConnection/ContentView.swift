@@ -1,6 +1,6 @@
 //
 //  ContentView.swift
-//  JoyaFirmwareTest
+//  JoyaPhoneConnection
 //
 //  Created by Gonzalo Minuto on 5/12/26.
 //

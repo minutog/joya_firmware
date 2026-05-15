@@ -1,6 +1,6 @@
 //
 //  JoyaBluetoothManager.swift
-//  JoyaFirmwareTest
+//  JoyaPhoneConnection
 //
 
 import CoreBluetooth
