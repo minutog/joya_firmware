@@ -1,0 +1,55 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "List connected nRF probes",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/list_probes.sh",
+      "options": {
+        "env": {
+          "NCS_TOOLCHAIN_BIN": "${config:joya.ncsToolchainBin}"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build firmware",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/west_build.sh",
+      "options": {
+        "env": {
+          "NCS_ROOT": "${config:joya.ncsRoot}",
+          "NCS_TOOLCHAIN_BIN": "${config:joya.ncsToolchainBin}",
+          "APP_LINK": "${config:joya.appSymlink}",
+          "BOARD": "${config:joya.board}"
+        }
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Flash firmware (DK -> custom PCB)",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/west_flash.sh ${input:dkSerial}",
+      "options": {
+        "env": {
+          "NCS_ROOT": "${config:joya.ncsRoot}",
+          "NCS_TOOLCHAIN_BIN": "${config:joya.ncsToolchainBin}",
+          "APP_LINK": "${config:joya.appSymlink}"
+        }
+      },
+      "dependsOn": "Build firmware",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "dkSerial",
+      "type": "promptString",
+      "description": "Enter your DK debug serial number (run 'List connected nRF probes' first)"
+    }
+  ]
+}

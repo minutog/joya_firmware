@@ -1,0 +1,20 @@
+.DS_Store
+*.log
+
+# Zephyr / Nordic build outputs
+**/build/
+**/.west/
+*.hex
+*.elf
+*.map
+*.bin
+
+# Xcode local state
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+**/xcuserdata/
+
+# macOS / editor noise
+.vscode/settings.json
+.idea/
