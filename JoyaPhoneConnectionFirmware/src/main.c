@@ -38,15 +38,33 @@
 #define DRV2605_I2C_ADDR_LOW 0x5A
 #define DRV2605_I2C_ADDR_HIGH 0x5B
 #define DRV2605_REG_MODE 0x01
+#define DRV2605_REG_RTP_INPUT 0x02
 #define DRV2605_REG_LIBRARY 0x03
 #define DRV2605_REG_WAVESEQ1 0x04
 #define DRV2605_REG_WAVESEQ2 0x05
 #define DRV2605_REG_GO 0x0C
+#define DRV2605_MODE_INTERNAL_TRIGGER 0x00
+#define DRV2605_MODE_RTP 0x05
+#define HAPTIC_RTP_MAX 127
+#define HAPTIC_RAMP_STEP_MS 250
 
 enum adv_request {
 	ADV_REQUEST_NONE = 0,
 	ADV_REQUEST_SETUP,
 	ADV_REQUEST_RECONNECT,
+};
+
+enum haptic_pattern {
+	HAPTIC_PATTERN_NONE = 0,
+	HAPTIC_PATTERN_PAIRING_WAKE,
+	HAPTIC_PATTERN_ROUTINE_START,
+	HAPTIC_PATTERN_ROUTINE_CANCEL,
+	HAPTIC_PATTERN_EMERGENCY_START,
+};
+
+struct haptic_step {
+	uint16_t duration_ms;
+	uint8_t amplitude;
 };
 
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(BUTTON_NODE, button_gpios);
@@ -66,18 +84,22 @@ static uint8_t button_click_count;
 static uint16_t drv2605_addr = DRV2605_I2C_ADDR_LOW;
 static char claimed_app_id[JOYA_APP_ID_MAX_LEN + 1];
 static enum adv_request pending_adv_request = ADV_REQUEST_NONE;
+static enum haptic_pattern active_haptic_pattern = HAPTIC_PATTERN_NONE;
+static size_t haptic_step_index;
 
 static void advertise_work_handler(struct k_work *work);
 static void setup_timeout_handler(struct k_work *work);
 static void button_work_handler(struct k_work *work);
 static void click_eval_handler(struct k_work *work);
 static void factory_reset_hold_handler(struct k_work *work);
+static void haptic_pattern_work_handler(struct k_work *work);
 
 static K_WORK_DEFINE(advertise_work, advertise_work_handler);
 static K_WORK_DELAYABLE_DEFINE(setup_timeout_work, setup_timeout_handler);
 static K_WORK_DEFINE(button_work, button_work_handler);
 static K_WORK_DELAYABLE_DEFINE(click_eval_work, click_eval_handler);
 static K_WORK_DELAYABLE_DEFINE(factory_reset_hold_work, factory_reset_hold_handler);
+static K_WORK_DELAYABLE_DEFINE(haptic_pattern_work, haptic_pattern_work_handler);
 
 static const struct bt_data ad_setup[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -91,6 +113,26 @@ static const struct bt_data ad_reconnect[] = {
 
 static const struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_SRV_VAL),
+};
+
+static const uint8_t haptic_pairing_ramp[] = {
+	0, 1, 2, 3, 5, 8, 12, 18, 27, 40, 58, 78, 96, 111, 121, HAPTIC_RTP_MAX,
+};
+
+static const uint8_t haptic_cancel_ramp[] = {
+	HAPTIC_RTP_MAX, 110, 95, 78, 62, 47, 35, 25, 17, 11, 7, 4, 2, 1, 0, 0,
+};
+
+static const struct haptic_step haptic_routine_steps[] = {
+	{ 90, 104 }, { 70, 0 }, { 90, 104 }, { 180, 0 },
+	{ 110, 108 }, { 160, 0 }, { 320, 120 },
+};
+
+static const struct haptic_step haptic_emergency_steps[] = {
+	{ 90, 114 }, { 80, 0 }, { 120, HAPTIC_RTP_MAX }, { 160, 0 },
+	{ 90, 114 }, { 80, 0 }, { 120, HAPTIC_RTP_MAX }, { 1000, 0 },
+	{ 90, 114 }, { 80, 0 }, { 120, HAPTIC_RTP_MAX }, { 160, 0 },
+	{ 90, 114 }, { 80, 0 }, { 120, HAPTIC_RTP_MAX },
 };
 
 static int drv2605_probe_addr(uint16_t addr)
@@ -138,7 +180,7 @@ static int haptic_init(void)
 		}
 	}
 
-	err = drv2605_write_reg(DRV2605_REG_MODE, 0x00);
+	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
 	if (err < 0) {
 		return err;
 	}
@@ -153,28 +195,160 @@ static int haptic_init(void)
 	return 0;
 }
 
-static void haptic_play(uint8_t effect)
+static int haptic_ensure_ready(void)
 {
 	int err;
 
 	if (!haptic_ready) {
 		err = haptic_init();
 		if (err < 0) {
-			return;
+			return err;
 		}
 	}
 
-	/* Real product firmware will map semantic patterns to effect sequences.
-	 * For this connection test we use one short effect per event.
-	 */
+	return 0;
+}
+
+static void haptic_idle(void)
+{
+	if (!haptic_ready) {
+		active_haptic_pattern = HAPTIC_PATTERN_NONE;
+		haptic_step_index = 0;
+		return;
+	}
+
+	(void)drv2605_write_reg(DRV2605_REG_RTP_INPUT, 0);
+	(void)drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
+	active_haptic_pattern = HAPTIC_PATTERN_NONE;
+	haptic_step_index = 0;
+}
+
+static void haptic_cancel_pattern(void)
+{
+	k_work_cancel_delayable(&haptic_pattern_work);
+	haptic_idle();
+}
+
+static bool haptic_set_rtp(uint8_t amplitude)
+{
+	int err;
+
+	err = haptic_ensure_ready();
+	if (err < 0) {
+		return false;
+	}
+
+	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_RTP);
+	if (err < 0) {
+		printk("Haptic RTP mode failed: %d\n", err);
+		haptic_ready = false;
+		active_haptic_pattern = HAPTIC_PATTERN_NONE;
+		return false;
+	}
+
+	err = drv2605_write_reg(DRV2605_REG_RTP_INPUT, amplitude);
+	if (err < 0) {
+		printk("Haptic RTP write failed: %d\n", err);
+		haptic_ready = false;
+		active_haptic_pattern = HAPTIC_PATTERN_NONE;
+		return false;
+	}
+
+	return true;
+}
+
+static void haptic_play_effect(uint8_t effect)
+{
+	int err;
+
+	err = haptic_ensure_ready();
+	if (err < 0) {
+		return;
+	}
+
+	haptic_cancel_pattern();
 	(void)drv2605_write_reg(DRV2605_REG_WAVESEQ1, effect);
 	(void)drv2605_write_reg(DRV2605_REG_WAVESEQ2, 0x00);
+	(void)drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
 
 	err = drv2605_write_reg(DRV2605_REG_GO, 0x01);
 	if (err < 0) {
 		printk("Haptic trigger failed: %d\n", err);
 		haptic_ready = false;
 	}
+}
+
+static bool haptic_get_next_step(uint8_t *amplitude, uint16_t *duration_ms)
+{
+	switch (active_haptic_pattern) {
+	case HAPTIC_PATTERN_PAIRING_WAKE:
+		if (haptic_step_index >= ARRAY_SIZE(haptic_pairing_ramp)) {
+			return false;
+		}
+		*amplitude = haptic_pairing_ramp[haptic_step_index];
+		*duration_ms = HAPTIC_RAMP_STEP_MS;
+		return true;
+	case HAPTIC_PATTERN_ROUTINE_START:
+		if (haptic_step_index >= ARRAY_SIZE(haptic_routine_steps)) {
+			return false;
+		}
+		*amplitude = haptic_routine_steps[haptic_step_index].amplitude;
+		*duration_ms = haptic_routine_steps[haptic_step_index].duration_ms;
+		return true;
+	case HAPTIC_PATTERN_ROUTINE_CANCEL:
+		if (haptic_step_index >= ARRAY_SIZE(haptic_cancel_ramp)) {
+			return false;
+		}
+		*amplitude = haptic_cancel_ramp[haptic_step_index];
+		*duration_ms = HAPTIC_RAMP_STEP_MS;
+		return true;
+	case HAPTIC_PATTERN_EMERGENCY_START:
+		if (haptic_step_index >= ARRAY_SIZE(haptic_emergency_steps)) {
+			return false;
+		}
+		*amplitude = haptic_emergency_steps[haptic_step_index].amplitude;
+		*duration_ms = haptic_emergency_steps[haptic_step_index].duration_ms;
+		return true;
+	default:
+		return false;
+	}
+}
+
+static void haptic_pattern_work_handler(struct k_work *work)
+{
+	uint8_t amplitude;
+	uint16_t duration_ms;
+
+	ARG_UNUSED(work);
+
+	if (!haptic_get_next_step(&amplitude, &duration_ms)) {
+		haptic_idle();
+		return;
+	}
+
+	haptic_step_index++;
+	if (!haptic_set_rtp(amplitude)) {
+		return;
+	}
+
+	k_work_reschedule(&haptic_pattern_work, K_MSEC(duration_ms));
+}
+
+static void haptic_play_pattern(enum haptic_pattern pattern)
+{
+	if (pattern == HAPTIC_PATTERN_NONE) {
+		haptic_cancel_pattern();
+		return;
+	}
+
+	if (haptic_ensure_ready() < 0) {
+		return;
+	}
+
+	k_work_cancel_delayable(&haptic_pattern_work);
+	active_haptic_pattern = pattern;
+	haptic_step_index = 0;
+	k_work_schedule(&haptic_pattern_work, K_NO_WAIT);
 }
 
 static void nus_send_text(const char *text)
@@ -296,7 +470,7 @@ static void reset_phone_pairing_state(void)
 		printk("BLE bond clear failed: %d\n", err);
 	}
 
-	haptic_play(0x2F);
+	haptic_play_effect(0x2F);
 
 	if (current_conn != NULL) {
 		conn = bt_conn_ref(current_conn);
@@ -361,7 +535,7 @@ static void handle_claim_command(const char *app_id)
 		return;
 	}
 
-	haptic_play(0x01);
+	haptic_play_effect(0x01);
 	nus_send_text("CLAIM_OK:" JOYA_ID);
 }
 
@@ -582,7 +756,7 @@ static void click_eval_handler(struct k_work *work)
 	if (current_conn == NULL) {
 		if (count >= 2) {
 			printk("Button event: wake BLE / double click\n");
-			haptic_play(0x0A);
+			haptic_play_pattern(HAPTIC_PATTERN_PAIRING_WAKE);
 			request_advertising(claimed ? ADV_REQUEST_RECONNECT : ADV_REQUEST_SETUP);
 		} else {
 			printk("Button single click ignored while disconnected\n");
@@ -592,13 +766,13 @@ static void click_eval_handler(struct k_work *work)
 
 	if (count == 1) {
 		printk("Button event: routine start / single click\n");
-		haptic_play(0x01);
+		haptic_play_pattern(HAPTIC_PATTERN_ROUTINE_START);
 		nus_send_text("EVENT:ROUTINE_START");
 	} else if (count == 2) {
 		printk("Button double click ignored while connected\n");
 	} else {
 		printk("Button event: emergency start / triple click\n");
-		haptic_play(0x2F);
+		haptic_play_pattern(HAPTIC_PATTERN_EMERGENCY_START);
 		nus_send_text("EVENT:EMERGENCY_START");
 	}
 }
@@ -693,7 +867,7 @@ static void button_work_handler(struct k_work *work)
 		if (button_click_count >= 2) {
 			clear_button_click_state();
 			printk("Button event: wake BLE / double click\n");
-			haptic_play(0x0A);
+			haptic_play_pattern(HAPTIC_PATTERN_PAIRING_WAKE);
 			request_advertising(claimed ? ADV_REQUEST_RECONNECT : ADV_REQUEST_SETUP);
 		} else {
 			k_work_reschedule(&click_eval_work, K_MSEC(BUTTON_CLICK_WINDOW_MS));
@@ -706,7 +880,7 @@ static void button_work_handler(struct k_work *work)
 	if (press_duration_ms >= BUTTON_ROUTINE_CANCEL_HOLD_MS) {
 		clear_button_click_state();
 		printk("Button event: routine cancel / hold\n");
-		haptic_play(0x0C);
+		haptic_play_pattern(HAPTIC_PATTERN_ROUTINE_CANCEL);
 		nus_send_text("EVENT:ROUTINE_CANCEL");
 		return;
 	}
@@ -716,7 +890,7 @@ static void button_work_handler(struct k_work *work)
 	if (button_click_count >= 3) {
 		clear_button_click_state();
 		printk("Button event: emergency start / triple click\n");
-		haptic_play(0x2F);
+		haptic_play_pattern(HAPTIC_PATTERN_EMERGENCY_START);
 		nus_send_text("EVENT:EMERGENCY_START");
 		return;
 	}

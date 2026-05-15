@@ -67,6 +67,17 @@ Comportamiento:
 - Conectado + triple click: manda mock `EVENT:EMERGENCY_START`; no manda rutina primero.
 - Cualquier estado + hold de 15 segundos: desconecta, borra el app claim, limpia BLE bond keys con `bt_unpair`, frena advertising y espera un nuevo doble click como setup fresco.
 
+## Patrones Hapticos En Este Prototipo
+
+Los patrones de boton usan el DRV2605 en modo RTP para poder controlar intensidad por pasos. Si llega un nuevo evento, el nuevo patron interrumpe el anterior.
+
+- Doble click para pairing: rampa exponencial ascendente de 4 segundos, de 0 a intensidad maxima.
+- Un click rutina: `tu-tu  tu  tuu`, como confirmacion corta.
+- Hold para apagar rutina: rampa exponencial descendente de 4 segundos, de intensidad maxima a 0.
+- Triple click emergencia: latido `tu-tu tu-tu`, 1 segundo de silencio, `tu-tu tu-tu`.
+
+El reset de pairing por hold de 15 segundos conserva un efecto corto separado porque es una accion tecnica de liberacion del dispositivo, no una decision final de UX de seguridad.
+
 ## Build
 
 From `JoyaPhoneConnectionFirmware/`:
