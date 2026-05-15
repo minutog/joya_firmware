@@ -484,6 +484,9 @@ static void click_eval_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 
+	if (button_click_count > 0) {
+		printk("Button click window closed, count=%u\n", button_click_count);
+	}
 	button_click_count = 0;
 }
 
@@ -508,8 +511,11 @@ static void button_work_handler(struct k_work *work)
 		return;
 	}
 
+	printk("Button edge: %s\n", button_active ? "pressed" : "released");
+
 	if (current_conn == NULL) {
 		if (button_active) {
+			printk("Button press without BLE connection; opening advertising\n");
 			haptic_play(0x0A);
 			request_advertising(claimed ? ADV_REQUEST_RECONNECT : ADV_REQUEST_SETUP);
 		}
@@ -531,6 +537,7 @@ static void button_work_handler(struct k_work *work)
 	if ((now - press_start_ms) >= BUTTON_HOLD_MS) {
 		button_click_count = 0;
 		k_work_cancel_delayable(&click_eval_work);
+		printk("Button event: routine cancel / hold\n");
 		haptic_play(0x0C);
 		nus_send_text("EVENT:ROUTINE_CANCEL");
 		return;
@@ -542,12 +549,14 @@ static void button_work_handler(struct k_work *work)
 	if (button_click_count >= 3) {
 		button_click_count = 0;
 		k_work_cancel_delayable(&click_eval_work);
+		printk("Button event: emergency start / triple click\n");
 		haptic_play(0x2F);
 		nus_send_text("EVENT:EMERGENCY_START");
 		return;
 	}
 
 	if (button_click_count == 1) {
+		printk("Button event: routine start / single click\n");
 		haptic_play(0x01);
 		nus_send_text("EVENT:ROUTINE_START");
 	}
