@@ -104,6 +104,11 @@ final class JoyaBluetoothManager: NSObject, ObservableObject {
     private var shouldAutoReconnect = true
     private var hasTriedRestore = false
 
+    // CoreBluetooth can surface the same ready state through multiple callbacks.
+    // Keep the setup handshake idempotent so Joya does not receive duplicate CLAIMs.
+    private var didSendPing = false
+    private var didSendClaim = false
+
     private var appID: String {
         if let existing = UserDefaults.standard.string(forKey: appIDKey) {
             return existing
@@ -177,6 +182,8 @@ final class JoyaBluetoothManager: NSObject, ObservableObject {
 
         rxCharacteristic = nil
         txCharacteristic = nil
+        didSendPing = false
+        didSendClaim = false
         connectionState = .scanning
         central?.scanForPeripherals(
             withServices: [nusServiceUUID],
@@ -239,9 +246,9 @@ final class JoyaBluetoothManager: NSObject, ObservableObject {
         addLog("Joya -> App: \(text)")
 
         if text.hasPrefix("HELLO:") {
-            send("PING")
+            sendPingIfNeeded()
         } else if text == "PONG:claimed=0" {
-            send("CLAIM:\(appID)")
+            sendClaimIfNeeded()
         } else if text == "PONG:claimed=1" {
             connectionState = .connected
         } else if text.hasPrefix("CLAIM_OK") {
@@ -262,8 +269,29 @@ final class JoyaBluetoothManager: NSObject, ObservableObject {
         } else if text.hasPrefix("ACK:") {
             addLog("Confirmacion recibida: \(text)")
         } else if text.hasPrefix("ERR:") {
-            connectionState = .failed(text)
+            if text == "ERR:ALREADY_CLAIMED", didSendClaim {
+                connectionState = .connected
+                addLog("Joya ya estaba claimed; seguimos conectado")
+            } else {
+                connectionState = .failed(text)
+            }
         }
+    }
+
+    private func sendPingIfNeeded() {
+        guard !didSendPing else { return }
+        didSendPing = true
+        send("PING")
+    }
+
+    private func sendClaimIfNeeded() {
+        guard !didSendClaim else {
+            addLog("CLAIM omitido: ya se envio uno en esta conexion")
+            return
+        }
+
+        didSendClaim = true
+        send("CLAIM:\(appID)")
     }
 
     private func savePeripheralID(_ peripheral: CBPeripheral) {
@@ -336,6 +364,8 @@ extension JoyaBluetoothManager: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         rxCharacteristic = nil
         txCharacteristic = nil
+        didSendPing = false
+        didSendClaim = false
         activityState = .none
         connectionState = .disconnected
         addLog("Desconectado: \(error?.localizedDescription ?? "sin error")")
@@ -385,7 +415,7 @@ extension JoyaBluetoothManager: CBPeripheralDelegate {
 
         if rxCharacteristic != nil && txCharacteristic != nil {
             connectionState = .connected
-            send("PING")
+            sendPingIfNeeded()
         }
     }
 

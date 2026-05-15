@@ -513,15 +513,6 @@ static void button_work_handler(struct k_work *work)
 
 	printk("Button edge: %s\n", button_active ? "pressed" : "released");
 
-	if (current_conn == NULL) {
-		if (button_active) {
-			printk("Button press without BLE connection; opening advertising\n");
-			haptic_play(0x0A);
-			request_advertising(claimed ? ADV_REQUEST_RECONNECT : ADV_REQUEST_SETUP);
-		}
-		return;
-	}
-
 	if (button_active) {
 		pressed = true;
 		press_start_ms = now;
@@ -533,6 +524,33 @@ static void button_work_handler(struct k_work *work)
 	}
 
 	pressed = false;
+
+	if (current_conn == NULL) {
+		/* While disconnected, the button is only a BLE wake control.
+		 * A single click is ignored so setup cannot start by accident.
+		 */
+		if ((now - press_start_ms) >= BUTTON_HOLD_MS) {
+			printk("Button hold ignored while disconnected\n");
+			button_click_count = 0;
+			k_work_cancel_delayable(&click_eval_work);
+			return;
+		}
+
+		button_click_count++;
+		k_work_reschedule(&click_eval_work, K_MSEC(BUTTON_CLICK_WINDOW_MS));
+
+		if (button_click_count >= 2) {
+			button_click_count = 0;
+			k_work_cancel_delayable(&click_eval_work);
+			printk("Button event: wake BLE / double click\n");
+			haptic_play(0x0A);
+			request_advertising(claimed ? ADV_REQUEST_RECONNECT : ADV_REQUEST_SETUP);
+		} else {
+			printk("Button click while disconnected; waiting for double click\n");
+		}
+
+		return;
+	}
 
 	if ((now - press_start_ms) >= BUTTON_HOLD_MS) {
 		button_click_count = 0;
@@ -653,7 +671,12 @@ int main(void)
 	}
 
 	printk("Settings loaded: claimed=%d app_id=%s\n", claimed, claimed_app_id);
-	request_advertising(claimed ? ADV_REQUEST_RECONNECT : ADV_REQUEST_SETUP);
+	if (claimed) {
+		request_advertising(ADV_REQUEST_RECONNECT);
+	} else {
+		/* First-time setup is intentionally user-gated by a double click. */
+		printk("Waiting for button double click to open setup advertising\n");
+	}
 
 	while (1) {
 		k_sleep(K_FOREVER);
