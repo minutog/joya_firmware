@@ -30,7 +30,9 @@
 #define JOYA_SETUP_NAME "Joya Setup"
 #define JOYA_APP_ID_MAX_LEN 32
 #define SETUP_WINDOW K_SECONDS(90)
-#define BUTTON_DEBOUNCE_MS 250
+#define BUTTON_DEBOUNCE_MS 50
+#define BUTTON_CLICK_WINDOW_MS 450
+#define BUTTON_HOLD_MS 900
 
 #define DRV2605_I2C_ADDR_LOW 0x5A
 #define DRV2605_I2C_ADDR_HIGH 0x5B
@@ -57,6 +59,7 @@ static bool claimed;
 static bool setup_window_open;
 static bool notifications_enabled;
 static bool haptic_ready;
+static uint8_t button_click_count;
 static uint16_t drv2605_addr = DRV2605_I2C_ADDR_LOW;
 static char claimed_app_id[JOYA_APP_ID_MAX_LEN + 1];
 static enum adv_request pending_adv_request = ADV_REQUEST_NONE;
@@ -64,10 +67,12 @@ static enum adv_request pending_adv_request = ADV_REQUEST_NONE;
 static void advertise_work_handler(struct k_work *work);
 static void setup_timeout_handler(struct k_work *work);
 static void button_work_handler(struct k_work *work);
+static void click_eval_handler(struct k_work *work);
 
 static K_WORK_DEFINE(advertise_work, advertise_work_handler);
 static K_WORK_DELAYABLE_DEFINE(setup_timeout_work, setup_timeout_handler);
 static K_WORK_DEFINE(button_work, button_work_handler);
+static K_WORK_DELAYABLE_DEFINE(click_eval_work, click_eval_handler);
 
 static const struct bt_data ad_setup[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -313,6 +318,10 @@ static void nus_received(struct bt_conn *conn, const void *data, uint16_t len, v
 		nus_send_text(claimed ? "PONG:claimed=1" : "PONG:claimed=0");
 	} else if (strncmp(cmd, "CLAIM:", strlen("CLAIM:")) == 0) {
 		handle_claim_command(cmd + strlen("CLAIM:"));
+	} else if (strcmp(cmd, "CANCEL_ROUTINE") == 0) {
+		nus_send_text("ACK:CANCEL_ROUTINE");
+	} else if (strcmp(cmd, "CANCEL_EMERGENCY") == 0) {
+		nus_send_text("ACK:CANCEL_EMERGENCY");
 	} else {
 		nus_send_text("ERR:UNKNOWN_COMMAND");
 	}
@@ -471,30 +480,77 @@ static int joya_settings_set(const char *key, size_t len, settings_read_cb read_
 
 SETTINGS_STATIC_HANDLER_DEFINE(joya, "joya", NULL, joya_settings_set, NULL, NULL);
 
+static void click_eval_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	button_click_count = 0;
+}
+
 static void button_work_handler(struct k_work *work)
 {
-	static int64_t last_press_ms;
+	static int64_t last_edge_ms;
+	static int64_t press_start_ms;
+	static bool pressed;
 	int64_t now = k_uptime_get();
+	int button_active;
 
 	ARG_UNUSED(work);
 
-	if ((now - last_press_ms) < BUTTON_DEBOUNCE_MS) {
+	if ((now - last_edge_ms) < BUTTON_DEBOUNCE_MS) {
 		return;
 	}
 
-	last_press_ms = now;
-	haptic_play(0x0A);
-
-	if (current_conn != NULL) {
-		nus_send_text("EVENT:BUTTON_PRESS");
+	last_edge_ms = now;
+	button_active = gpio_pin_get_dt(&button);
+	if (button_active < 0) {
+		printk("Button read failed: %d\n", button_active);
 		return;
 	}
 
-	/* For this connection test, a button press re-opens whichever advertising
-	 * mode makes sense. Later, product firmware can replace this with double
-	 * click for setup and long-long press for factory reset.
-	 */
-	request_advertising(claimed ? ADV_REQUEST_RECONNECT : ADV_REQUEST_SETUP);
+	if (current_conn == NULL) {
+		if (button_active) {
+			haptic_play(0x0A);
+			request_advertising(claimed ? ADV_REQUEST_RECONNECT : ADV_REQUEST_SETUP);
+		}
+		return;
+	}
+
+	if (button_active) {
+		pressed = true;
+		press_start_ms = now;
+		return;
+	}
+
+	if (!pressed) {
+		return;
+	}
+
+	pressed = false;
+
+	if ((now - press_start_ms) >= BUTTON_HOLD_MS) {
+		button_click_count = 0;
+		k_work_cancel_delayable(&click_eval_work);
+		haptic_play(0x0C);
+		nus_send_text("EVENT:ROUTINE_CANCEL");
+		return;
+	}
+
+	button_click_count++;
+	k_work_reschedule(&click_eval_work, K_MSEC(BUTTON_CLICK_WINDOW_MS));
+
+	if (button_click_count >= 3) {
+		button_click_count = 0;
+		k_work_cancel_delayable(&click_eval_work);
+		haptic_play(0x2F);
+		nus_send_text("EVENT:EMERGENCY_START");
+		return;
+	}
+
+	if (button_click_count == 1) {
+		haptic_play(0x01);
+		nus_send_text("EVENT:ROUTINE_START");
+	}
 }
 
 static void button_pressed_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
@@ -519,7 +575,7 @@ static int button_init(void)
 		return err;
 	}
 
-	err = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
+	err = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_BOTH);
 	if (err < 0) {
 		return err;
 	}
