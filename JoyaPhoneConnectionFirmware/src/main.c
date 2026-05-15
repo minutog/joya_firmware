@@ -31,8 +31,9 @@
 #define JOYA_APP_ID_MAX_LEN 32
 #define SETUP_WINDOW K_SECONDS(90)
 #define BUTTON_DEBOUNCE_MS 50
-#define BUTTON_CLICK_WINDOW_MS 450
-#define BUTTON_HOLD_MS 900
+#define BUTTON_CLICK_WINDOW_MS 600
+#define BUTTON_ROUTINE_CANCEL_HOLD_MS 900
+#define BUTTON_FACTORY_RESET_HOLD_MS 15000
 
 #define DRV2605_I2C_ADDR_LOW 0x5A
 #define DRV2605_I2C_ADDR_HIGH 0x5B
@@ -59,6 +60,8 @@ static bool claimed;
 static bool setup_window_open;
 static bool notifications_enabled;
 static bool haptic_ready;
+static bool factory_reset_in_progress;
+static bool factory_reset_triggered;
 static uint8_t button_click_count;
 static uint16_t drv2605_addr = DRV2605_I2C_ADDR_LOW;
 static char claimed_app_id[JOYA_APP_ID_MAX_LEN + 1];
@@ -68,11 +71,13 @@ static void advertise_work_handler(struct k_work *work);
 static void setup_timeout_handler(struct k_work *work);
 static void button_work_handler(struct k_work *work);
 static void click_eval_handler(struct k_work *work);
+static void factory_reset_hold_handler(struct k_work *work);
 
 static K_WORK_DEFINE(advertise_work, advertise_work_handler);
 static K_WORK_DELAYABLE_DEFINE(setup_timeout_work, setup_timeout_handler);
 static K_WORK_DEFINE(button_work, button_work_handler);
 static K_WORK_DELAYABLE_DEFINE(click_eval_work, click_eval_handler);
+static K_WORK_DELAYABLE_DEFINE(factory_reset_hold_work, factory_reset_hold_handler);
 
 static const struct bt_data ad_setup[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -240,6 +245,77 @@ static void setup_timeout_handler(struct k_work *work)
 	printk("Setup window expired; BLE advertising stopped\n");
 }
 
+static void clear_button_click_state(void)
+{
+	button_click_count = 0;
+	k_work_cancel_delayable(&click_eval_work);
+}
+
+static void finish_phone_pairing_reset_idle(void)
+{
+	pending_adv_request = ADV_REQUEST_NONE;
+	setup_window_open = false;
+	k_work_cancel_delayable(&setup_timeout_work);
+	(void)bt_le_adv_stop();
+	printk("Phone pairing reset complete; waiting for button double click\n");
+}
+
+static void delete_setting_key(const char *key)
+{
+	int err;
+
+	err = settings_delete(key);
+	if (err < 0) {
+		printk("Settings delete failed for %s: %d\n", key, err);
+	}
+}
+
+static void reset_phone_pairing_state(void)
+{
+	struct bt_conn *conn = NULL;
+	int err;
+
+	printk("Button event: phone pairing reset / 15s hold\n");
+
+	factory_reset_in_progress = true;
+	clear_button_click_state();
+	k_work_cancel_delayable(&setup_timeout_work);
+	(void)bt_le_adv_stop();
+	nus_send_text("EVENT:PHONE_PAIRING_RESET");
+
+	/* This clears our app-level claim. bt_unpair clears the BLE bond keys
+	 * stored by the Bluetooth stack, so the next phone setup is fresh.
+	 */
+	claimed = false;
+	memset(claimed_app_id, 0, sizeof(claimed_app_id));
+	delete_setting_key("joya/app_id");
+	delete_setting_key("joya/claimed");
+
+	err = bt_unpair(BT_ID_DEFAULT, NULL);
+	if (err < 0) {
+		printk("BLE bond clear failed: %d\n", err);
+	}
+
+	haptic_play(0x2F);
+
+	if (current_conn != NULL) {
+		conn = bt_conn_ref(current_conn);
+	}
+
+	if (conn != NULL) {
+		err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+		bt_conn_unref(conn);
+		if (err == 0) {
+			return;
+		}
+
+		printk("BLE disconnect after reset failed: %d\n", err);
+	}
+
+	factory_reset_in_progress = false;
+	finish_phone_pairing_reset_idle();
+}
+
 static int save_claim(const char *app_id)
 {
 	uint8_t claimed_value = 1;
@@ -354,6 +430,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
 	current_conn = bt_conn_ref(conn);
 	notifications_enabled = false;
+	clear_button_click_state();
 	printk("BLE connected\n");
 
 	/* Trigger bonding/encryption. The app can still use the simple NUS
@@ -377,6 +454,14 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	}
 
 	notifications_enabled = false;
+	clear_button_click_state();
+
+	if (factory_reset_in_progress) {
+		factory_reset_in_progress = false;
+		finish_phone_pairing_reset_idle();
+		return;
+	}
+
 	request_advertising(claimed ? ADV_REQUEST_RECONNECT : ADV_REQUEST_SETUP);
 }
 
@@ -482,12 +567,60 @@ SETTINGS_STATIC_HANDLER_DEFINE(joya, "joya", NULL, joya_settings_set, NULL, NULL
 
 static void click_eval_handler(struct k_work *work)
 {
+	uint8_t count = button_click_count;
+
 	ARG_UNUSED(work);
 
-	if (button_click_count > 0) {
-		printk("Button click window closed, count=%u\n", button_click_count);
-	}
 	button_click_count = 0;
+
+	if (count == 0) {
+		return;
+	}
+
+	printk("Button click window closed, count=%u\n", count);
+
+	if (current_conn == NULL) {
+		if (count >= 2) {
+			printk("Button event: wake BLE / double click\n");
+			haptic_play(0x0A);
+			request_advertising(claimed ? ADV_REQUEST_RECONNECT : ADV_REQUEST_SETUP);
+		} else {
+			printk("Button single click ignored while disconnected\n");
+		}
+		return;
+	}
+
+	if (count == 1) {
+		printk("Button event: routine start / single click\n");
+		haptic_play(0x01);
+		nus_send_text("EVENT:ROUTINE_START");
+	} else if (count == 2) {
+		printk("Button double click ignored while connected\n");
+	} else {
+		printk("Button event: emergency start / triple click\n");
+		haptic_play(0x2F);
+		nus_send_text("EVENT:EMERGENCY_START");
+	}
+}
+
+static void factory_reset_hold_handler(struct k_work *work)
+{
+	int button_active;
+
+	ARG_UNUSED(work);
+
+	button_active = gpio_pin_get_dt(&button);
+	if (button_active < 0) {
+		printk("Button read failed during reset hold: %d\n", button_active);
+		return;
+	}
+
+	if (!button_active) {
+		return;
+	}
+
+	factory_reset_triggered = true;
+	reset_phone_pairing_state();
 }
 
 static void button_work_handler(struct k_work *work)
@@ -496,6 +629,7 @@ static void button_work_handler(struct k_work *work)
 	static int64_t press_start_ms;
 	static bool pressed;
 	int64_t now = k_uptime_get();
+	int64_t press_duration_ms;
 	int button_active;
 
 	ARG_UNUSED(work);
@@ -514,8 +648,13 @@ static void button_work_handler(struct k_work *work)
 	printk("Button edge: %s\n", button_active ? "pressed" : "released");
 
 	if (button_active) {
-		pressed = true;
-		press_start_ms = now;
+		if (!pressed) {
+			pressed = true;
+			press_start_ms = now;
+			factory_reset_triggered = false;
+			k_work_reschedule(&factory_reset_hold_work,
+					  K_MSEC(BUTTON_FACTORY_RESET_HOLD_MS));
+		}
 		return;
 	}
 
@@ -524,37 +663,48 @@ static void button_work_handler(struct k_work *work)
 	}
 
 	pressed = false;
+	k_work_cancel_delayable(&factory_reset_hold_work);
+
+	if (factory_reset_triggered) {
+		factory_reset_triggered = false;
+		return;
+	}
+
+	press_duration_ms = now - press_start_ms;
+
+	if (press_duration_ms >= BUTTON_FACTORY_RESET_HOLD_MS) {
+		factory_reset_triggered = true;
+		reset_phone_pairing_state();
+		return;
+	}
 
 	if (current_conn == NULL) {
 		/* While disconnected, the button is only a BLE wake control.
 		 * A single click is ignored so setup cannot start by accident.
 		 */
-		if ((now - press_start_ms) >= BUTTON_HOLD_MS) {
+		if (press_duration_ms >= BUTTON_ROUTINE_CANCEL_HOLD_MS) {
 			printk("Button hold ignored while disconnected\n");
-			button_click_count = 0;
-			k_work_cancel_delayable(&click_eval_work);
+			clear_button_click_state();
 			return;
 		}
 
 		button_click_count++;
-		k_work_reschedule(&click_eval_work, K_MSEC(BUTTON_CLICK_WINDOW_MS));
 
 		if (button_click_count >= 2) {
-			button_click_count = 0;
-			k_work_cancel_delayable(&click_eval_work);
+			clear_button_click_state();
 			printk("Button event: wake BLE / double click\n");
 			haptic_play(0x0A);
 			request_advertising(claimed ? ADV_REQUEST_RECONNECT : ADV_REQUEST_SETUP);
 		} else {
+			k_work_reschedule(&click_eval_work, K_MSEC(BUTTON_CLICK_WINDOW_MS));
 			printk("Button click while disconnected; waiting for double click\n");
 		}
 
 		return;
 	}
 
-	if ((now - press_start_ms) >= BUTTON_HOLD_MS) {
-		button_click_count = 0;
-		k_work_cancel_delayable(&click_eval_work);
+	if (press_duration_ms >= BUTTON_ROUTINE_CANCEL_HOLD_MS) {
+		clear_button_click_state();
 		printk("Button event: routine cancel / hold\n");
 		haptic_play(0x0C);
 		nus_send_text("EVENT:ROUTINE_CANCEL");
@@ -562,22 +712,17 @@ static void button_work_handler(struct k_work *work)
 	}
 
 	button_click_count++;
-	k_work_reschedule(&click_eval_work, K_MSEC(BUTTON_CLICK_WINDOW_MS));
 
 	if (button_click_count >= 3) {
-		button_click_count = 0;
-		k_work_cancel_delayable(&click_eval_work);
+		clear_button_click_state();
 		printk("Button event: emergency start / triple click\n");
 		haptic_play(0x2F);
 		nus_send_text("EVENT:EMERGENCY_START");
 		return;
 	}
 
-	if (button_click_count == 1) {
-		printk("Button event: routine start / single click\n");
-		haptic_play(0x01);
-		nus_send_text("EVENT:ROUTINE_START");
-	}
+	k_work_reschedule(&click_eval_work, K_MSEC(BUTTON_CLICK_WINDOW_MS));
+	printk("Button click while connected; waiting for click window\n");
 }
 
 static void button_pressed_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins)

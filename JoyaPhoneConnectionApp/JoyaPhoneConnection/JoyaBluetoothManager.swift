@@ -266,6 +266,10 @@ final class JoyaBluetoothManager: NSObject, ObservableObject {
         } else if text == "EVENT:EMERGENCY_CANCEL" {
             activityState = .none
             addLog("Boton Joya: emergencia cancelada")
+        } else if text == "EVENT:PHONE_PAIRING_RESET" {
+            UserDefaults.standard.removeObject(forKey: savedPeripheralKey)
+            activityState = .none
+            addLog("Joya borro el pairing guardado")
         } else if text.hasPrefix("ACK:") {
             addLog("Confirmacion recibida: \(text)")
         } else if text.hasPrefix("ERR:") {

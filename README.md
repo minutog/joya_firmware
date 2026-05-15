@@ -49,6 +49,24 @@ No tomar esos eventos como decisiones finales de producto. Todavia quedan abiert
 
 En resumen: de este trabajo conviene tomar como base la conexion Joya-phone, el claim inicial y el reconnect. La logica de seguridad/rutina/emergencia esta representada solo como mock para testear el canal.
 
+## Reglas Del Boton En Este Prototipo
+
+Tiempos actuales:
+
+- Debounce: 50 ms.
+- Ventana de clicks: 600 ms despues de cada click corto.
+- Hold corto: 900 ms, usado por ahora solo como mock `ROUTINE_CANCEL` mientras esta conectado.
+- Hold de reset: 15 segundos en cualquier estado.
+
+Comportamiento:
+
+- Desconectado + un click: no hace nada.
+- Desconectado + doble click: abre BLE advertising para setup/reconnect.
+- Conectado + un click: manda mock `EVENT:ROUTINE_START`, pero solo despues de que cierre la ventana de 600 ms.
+- Conectado + doble click: no hace nada.
+- Conectado + triple click: manda mock `EVENT:EMERGENCY_START`; no manda rutina primero.
+- Cualquier estado + hold de 15 segundos: desconecta, borra el app claim, limpia BLE bond keys con `bt_unpair`, frena advertising y espera un nuevo doble click como setup fresco.
+
 ## Build
 
 From `JoyaPhoneConnectionFirmware/`:
