@@ -29,6 +29,26 @@ This is not the full safety-product firmware. It is the isolated Joya-phone conn
 
 Important BLE model: Joya is the BLE peripheral. The phone app is the BLE central. That means the firmware advertises; the phone performs the actual reconnect.
 
+## Nota Para Julieta
+
+Este repo deja armada solamente la base de conexion entre Joya y el celular. La parte importante para reutilizar es:
+
+- Joya espera un doble click para abrir el advertising inicial de setup.
+- La app encuentra el dispositivo por el servicio BLE, sin que el usuario elija de una lista.
+- La app hace un `CLAIM:<app_id>` y Joya guarda ese claim en flash.
+- Una vez claimed, Joya puede volver a anunciarse como `Joya` para que el celular se reconecte.
+- La comunicacion actual usa Nordic UART Service porque es simple para prototipar mensajes de ida y vuelta.
+
+Los eventos de `ROUTINE_START`, `ROUTINE_CANCEL` y `EMERGENCY_START` son mock de prueba. Estan ahi solo para confirmar que:
+
+- El boton del PCB llega al firmware.
+- El firmware puede enviar eventos a la app.
+- La app puede mostrar estados basicos y mandar comandos de cancelacion.
+
+No tomar esos eventos como decisiones finales de producto. Todavia quedan abiertas para el firmware final decisiones como cantidad real de clicks, duracion de hold, debounce definitivo, estados de seguridad, escalamiento de emergencia, patrones hapticos, consumo/bateria, reset de fabrica, bloqueo contra otros celulares y cualquier logica real de rutina o emergencia.
+
+En resumen: de este trabajo conviene tomar como base la conexion Joya-phone, el claim inicial y el reconnect. La logica de seguridad/rutina/emergencia esta representada solo como mock para testear el canal.
+
 ## Build
 
 From `JoyaPhoneConnectionFirmware/`:
