@@ -3,6 +3,19 @@
   "joya.ncsToolchainBin": "/opt/nordic/ncs/toolchains/b8efef2ad5/bin",
   "joya.appSymlink": "/tmp/joya_phone_connection_fw",
   "joya.board": "nrf52dk/nrf52832",
+  "nrf-connect.flash.softreset": true,
+  "nrf-connect.taskBindings": {
+    "flash": [
+      {
+        "taskName": "Flash firmware (DK -> custom PCB)"
+      }
+    ],
+    "eraseAndFlash": [
+      {
+        "taskName": "Flash firmware (DK -> custom PCB)"
+      }
+    ]
+  },
   "nrf-connect.applications": [
     "${workspaceFolder}"
   ]

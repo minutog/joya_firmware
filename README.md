@@ -62,10 +62,12 @@ Comportamiento:
 
 - Desconectado + un click: no hace nada.
 - Desconectado + doble click: abre BLE advertising para setup/reconnect.
+- Desconectado + triple click: activa emergencia, vibra y reintenta avisar al telefono cuando reconecte.
 - Conectado + un click: manda mock `EVENT:ROUTINE_START`, pero solo despues de que cierre la ventana de 600 ms.
 - Conectado + doble click: no hace nada.
-- Conectado + triple click: manda mock `EVENT:EMERGENCY_START`; no manda rutina primero.
-- Cualquier estado + hold de 15 segundos: desconecta, borra el app claim, limpia BLE bond keys con `bt_unpair`, frena advertising y espera un nuevo doble click como setup fresco.
+- Conectado + triple click: activa emergencia, vibra y manda `EVENT:EMERGENCY_ON`; no manda rutina primero.
+- Emergencia activa: ignora gestos normales hasta recibir `EMERGENCY_OFF` desde el telefono.
+- Cualquier estado + hold de 15 segundos: desconecta, borra el app claim, frena advertising y espera un nuevo doble click como setup fresco.
 
 ## Patrones Hapticos En Este Prototipo
 
@@ -75,6 +77,7 @@ Los patrones de boton usan el DRV2605 en modo RTP para poder controlar intensida
 - Un click rutina: `tu-tu  tu  tuu`, como confirmacion corta.
 - Hold para apagar rutina: rampa exponencial descendente de 4 segundos, de intensidad maxima a 0.
 - Triple click emergencia: latido `tu-tu tu-tu`, 1 segundo de silencio, `tu-tu tu-tu`.
+- `FRIEND_COMING_FOR_YOU` desde el telefono: vibracion larga y dos pulsos cortos.
 
 El reset de pairing por hold de 15 segundos conserva un efecto corto separado porque es una accion tecnica de liberacion del dispositivo, no una decision final de UX de seguridad.
 
@@ -123,6 +126,11 @@ JOYA -> APP: PONG:claimed=0|1
 APP -> JOYA: CLAIM:<app_id>
 JOYA -> APP: CLAIM_OK:JOYA-DEV-001
 JOYA -> APP: ERR:ALREADY_CLAIMED
+
+JOYA -> APP: EVENT:EMERGENCY_ON
+APP -> JOYA: ACK:EMERGENCY_ON
+APP -> JOYA: FRIEND_COMING_FOR_YOU
+APP -> JOYA: EMERGENCY_OFF
 ```
 
 See `docs/ble_pairing_logic.md` for the connection model.

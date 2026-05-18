@@ -1,0 +1,36 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "List connected nRF probes",
+      "type": "shell",
+      "command": "${workspaceFolder}/JoyaPhoneConnectionFirmware/scripts/list_probes.sh",
+      "options": {
+        "env": {
+          "NCS_TOOLCHAIN_BIN": "${config:joya.ncsToolchainBin}"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Flash firmware (DK -> custom PCB)",
+      "type": "shell",
+      "command": "${workspaceFolder}/JoyaPhoneConnectionFirmware/scripts/west_flash.sh ${input:dkSerial}",
+      "options": {
+        "env": {
+          "NCS_ROOT": "${config:joya.ncsRoot}",
+          "NCS_TOOLCHAIN_BIN": "${config:joya.ncsToolchainBin}",
+          "APP_LINK": "${config:joya.appSymlink}"
+        }
+      },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "dkSerial",
+      "type": "promptString",
+      "description": "Enter your DK debug serial number"
+    }
+  ]
+}

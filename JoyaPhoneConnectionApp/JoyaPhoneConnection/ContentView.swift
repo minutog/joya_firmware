@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @StateObject private var joya = JoyaBluetoothManager()
@@ -89,6 +90,13 @@ struct ContentView: View {
                 .multilineTextAlignment(.center)
                 .lineLimit(3)
                 .frame(maxWidth: 320)
+
+            Text("Ultimo evento: \(joya.logs.first?.message ?? "Sin eventos tecnicos todavia")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(4)
+                .frame(maxWidth: 320)
         }
         .padding(.top, 8)
     }
@@ -118,6 +126,15 @@ struct ContentView: View {
             }
 
             if joya.activityState == .emergency {
+                Button {
+                    joya.sendFriendComingForYou()
+                } label: {
+                    Text("Amigo en camino")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+
                 Button(role: .destructive) {
                     joya.cancelEmergency()
                 } label: {
@@ -128,7 +145,27 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
             }
 
+            if joya.canRestartSearch {
+                Button {
+                    joya.restartSearchTapped()
+                } label: {
+                    Text("Reintentar busqueda")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+
             if joya.isConnected {
+                Button {
+                    joya.testHaptic()
+                } label: {
+                    Text("Test haptic")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
                 Button(role: .destructive) {
                     joya.disconnectForTest()
                 } label: {
@@ -199,6 +236,15 @@ private struct LogSheet: View {
             }
             .navigationTitle("Log")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Copiar") {
+                        UIPasteboard.general.string = logs
+                            .map { "\(Self.formatter.string(from: $0.date)) \($0.message)" }
+                            .joined(separator: "\n")
+                    }
+                    .disabled(logs.isEmpty)
+                }
+
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Limpiar", action: clearLogs)
                 }

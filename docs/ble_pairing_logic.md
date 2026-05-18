@@ -15,14 +15,14 @@ On Joya:
 
 - `claimed`: whether this Joya has already been claimed by an app.
 - `app_id`: temporary prototype identifier sent by the app.
-- BLE bond keys: stored by the Bluetooth stack when bonding is enabled.
+- BLE bond keys: intentionally disabled in this prototype path.
 
 On the phone:
 
 - Joya peripheral identifier.
 - Joya id returned by the firmware.
 - Later: app secret in Keychain/Keystore.
-- BLE bond keys: stored by iOS/Android system Bluetooth stack.
+- BLE bond keys: intentionally disabled in this prototype path.
 
 ## Prototype Flow
 
@@ -52,7 +52,7 @@ Disconnect
 
 ## Security Notes
 
-This first firmware enables BLE bonding and limits saved bonds to one peer. It also rejects new pairing attempts once `claimed` is true.
+This prototype firmware intentionally does not enable BLE bonding. Reconnect is kept simple: Joya advertises the NUS service, the phone connects as a central, and the app-level `CLAIM:<app_id>` decides whether setup is already complete.
 
 For production, we should add a stricter app-level authorization step:
 
@@ -71,5 +71,5 @@ Re-pairing should not be a normal reboot. It should be a deliberate factory rese
 
 - Delete `claimed`.
 - Delete `app_id`.
-- Delete BLE bonds.
+- No BLE bond deletion is needed in this prototype path.
 - Return to setup advertising.
