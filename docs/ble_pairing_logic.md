@@ -29,7 +29,8 @@ On the phone:
 ```text
 Boot
   |
-  |-- claimed=false -> advertise as "Joya Setup" for setup
+  |-- claimed=false -> wait for double click
+  |                    then advertise as "Joya Setup" for 90s
   |
   |-- claimed=true  -> advertise as "Joya" for reconnect
 
@@ -48,6 +49,7 @@ Disconnect
   |
   |-- if claimed=true: advertise again as "Joya"
   |-- if claimed=false and setup window is active: advertise as "Joya Setup"
+  |-- if claimed=false and setup window expired: wait for double click again
 ```
 
 ## Security Notes

@@ -21,7 +21,7 @@ BLE phone-connection firmware and test app workspace for the Joya safety wristba
 
 This is not the full safety-product firmware. It is the isolated Joya-phone connection slice, so Julieta can build the rest of the firmware without confusing this test harness with the final product logic. It focuses on:
 
-- Advertising as `Joya Setup` while unclaimed.
+- Opening `Joya Setup` advertising by double click while unclaimed.
 - Accepting a simple app-level `CLAIM:<app_id>` command over Nordic UART Service.
 - Saving `claimed = true` in flash.
 - Advertising as `Joya` after claim.
@@ -29,57 +29,20 @@ This is not the full safety-product firmware. It is the isolated Joya-phone conn
 
 Important BLE model: Joya is the BLE peripheral. The phone app is the BLE central. That means the firmware advertises; the phone performs the actual reconnect.
 
-## Nota Para Julieta
+## Firmware Rules
 
-Este repo deja armada solamente la base de conexion entre Joya y el celular. La parte importante para reutilizar es:
+The short source of truth for the current behavior is:
 
-- Joya espera un doble click para abrir el advertising inicial de setup.
-- La app encuentra el dispositivo por el servicio BLE, sin que el usuario elija de una lista.
-- La app hace un `CLAIM:<app_id>` y Joya guarda ese claim en flash.
-- Una vez claimed, Joya puede volver a anunciarse como `Joya` para que el celular se reconecte.
-- La comunicacion actual usa Nordic UART Service porque es simple para prototipar mensajes de ida y vuelta.
+- `docs/firmware_rules.md` - BLE timing, button rules, routine, emergency, friend-coming, and pairing reset.
+- `docs/ble_pairing_logic.md` - connection and claim model.
 
-Los eventos de `ROUTINE_START`, `ROUTINE_CANCEL` y `EMERGENCY_START` son mock de prueba. Estan ahi solo para confirmar que:
+High-level summary:
 
-- El boton del PCB llega al firmware.
-- El firmware puede enviar eventos a la app.
-- La app puede mostrar estados basicos y mandar comandos de cancelacion.
-
-No tomar esos eventos como decisiones finales de producto. Todavia quedan abiertas para el firmware final decisiones como cantidad real de clicks, duracion de hold, debounce definitivo, estados de seguridad, escalamiento de emergencia, patrones hapticos, consumo/bateria, reset de fabrica, bloqueo contra otros celulares y cualquier logica real de rutina o emergencia.
-
-En resumen: de este trabajo conviene tomar como base la conexion Joya-phone, el claim inicial y el reconnect. La logica de seguridad/rutina/emergencia esta representada solo como mock para testear el canal.
-
-## Reglas Del Boton En Este Prototipo
-
-Tiempos actuales:
-
-- Debounce: 50 ms.
-- Ventana de clicks: 600 ms despues de cada click corto.
-- Hold corto: 900 ms, usado por ahora solo como mock `ROUTINE_CANCEL` mientras esta conectado.
-- Hold de reset: 15 segundos en cualquier estado.
-
-Comportamiento:
-
-- Desconectado + un click: no hace nada.
-- Desconectado + doble click: abre BLE advertising para setup/reconnect.
-- Desconectado + triple click: activa emergencia, vibra y reintenta avisar al telefono cuando reconecte.
-- Conectado + un click: manda mock `EVENT:ROUTINE_START`, pero solo despues de que cierre la ventana de 600 ms.
-- Conectado + doble click: no hace nada.
-- Conectado + triple click: activa emergencia, vibra y manda `EVENT:EMERGENCY_ON`; no manda rutina primero.
-- Emergencia activa: ignora gestos normales hasta recibir `EMERGENCY_OFF` desde el telefono.
-- Cualquier estado + hold de 15 segundos: desconecta, borra el app claim, frena advertising y espera un nuevo doble click como setup fresco.
-
-## Patrones Hapticos En Este Prototipo
-
-Los patrones de boton usan el DRV2605 en modo RTP para poder controlar intensidad por pasos. Si llega un nuevo evento, el nuevo patron interrumpe el anterior.
-
-- Doble click para pairing: rampa exponencial ascendente de 4 segundos, de 0 a intensidad maxima.
-- Un click rutina: `tu-tu  tu  tuu`, como confirmacion corta.
-- Hold para apagar rutina: rampa exponencial descendente de 4 segundos, de intensidad maxima a 0.
-- Triple click emergencia: latido `tu-tu tu-tu`, 1 segundo de silencio, `tu-tu tu-tu`.
-- `FRIEND_COMING_FOR_YOU` desde el telefono: vibracion larga y dos pulsos cortos.
-
-El reset de pairing por hold de 15 segundos conserva un efecto corto separado porque es una accion tecnica de liberacion del dispositivo, no una decision final de UX de seguridad.
+- Setup is opened by double click and lasts `90s`.
+- Routine works only while connected and not in emergency.
+- Emergency is triple click, vibrates immediately, and retries delivery until the phone ACKs it.
+- Emergency stays active until the phone sends `EMERGENCY_OFF`.
+- `FRIEND_COMING` is a phone-to-Joya haptic message.
 
 ## Build
 
