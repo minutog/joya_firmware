@@ -13,6 +13,8 @@ un checklist de logica de producto.
   que sentirse consistente.
 - [ ] La emergencia siempre tiene prioridad.
 - [ ] Las vibraciones tienen que explicar que paso sin obligar a mirar el celular.
+- [ ] Joya no esta escuchando mensajes del celular todo el tiempo: para recibir
+  una respuesta tipo "Te sigo", tiene que estar en emergencia.
 
 ## 2. Estados del producto
 
@@ -21,9 +23,9 @@ un checklist de logica de producto.
 | Nueva / sin vincular | Joya todavia no pertenece a ningun celular | El usuario puede abrir el modo setup con doble click | Se vincula con la app |
 | Setup abierto | Joya esta visible para que la app la encuentre | La app la detecta y la vincula; si no pasa nada, vuelve a quedar quieta | Vinculacion exitosa o se cierra solo |
 | Vinculada, sin conexion activa | Joya ya pertenece a una app pero el celular no esta conectado en ese momento | Joya y la app intentan reencontrarse solas | Se reconecta |
-| Conectada | Joya y la app se estan escuchando | Se pueden iniciar rutinas, cancelar rutinas, recibir avisos y disparar emergencia | Se desconecta, se resetea vinculacion o entra emergencia |
+| Conectada | Joya y la app estan listas para acciones basicas | Se pueden iniciar rutinas, cancelar rutinas y disparar emergencia | Se desconecta, se resetea vinculacion o entra emergencia |
 | Rutina | La app entiende que hay una rutina activa | Un nuevo click vuelve a mandar inicio y vuelve a vibrar; no queda bloqueado esperando cancelacion | La app o el usuario cancelan, o aparece emergencia |
-| Emergencia | La prioridad maxima esta activa | Joya insiste hasta que la app se entere; otros usos normales quedan bloqueados | Solo se apaga desde la app |
+| Emergencia | La prioridad maxima esta activa | Joya insiste hasta que la app se entere; puede recibir la respuesta "Te sigo" del celular | Solo se apaga desde la app |
 | Reset de vinculacion | El usuario borra la relacion con el celular | Se corta la conexion y Joya vuelve a quedar como nueva | Vuelve a estado sin vincular |
 
 ## 3. Vinculacion inicial
@@ -97,16 +99,23 @@ Reglas importantes:
 - [ ] La emergencia solo se cierra desde la app.
 - [ ] No hay un flujo normal donde el usuario "rebootea" Joya para salir de
   emergencia.
-- [ ] Mientras emergencia esta activa, los avisos de amigo y la rutina no deben
+- [ ] Mientras esta en emergencia, Joya queda escuchando al celular para poder
+  recibir una respuesta tipo "Te sigo".
+- [ ] Mientras emergencia esta activa, la respuesta del amigo y la rutina no deben
   cambiar el estado de emergencia.
 
-## 8. Avisos desde el celular
+## 8. Respuesta del amigo
 
-- [ ] La app puede mandar un aviso de "tu amigo viene / te sigue".
+- [ ] La respuesta de "Te sigo" solo existe dentro del flujo de emergencia.
+- [ ] Para recibir esa respuesta, Joya tiene que estar en emergencia y escuchando
+  al celular.
+- [ ] No se puede recibir un mensaje de ese tipo durante rutina ni en un estado
+  sin modo activo.
 - [ ] Joya responde con una vibracion en la muneca.
-- [ ] Ese aviso no cambia ningun estado.
-- [ ] No inicia emergencia.
-- [ ] No cancela rutina.
+- [ ] Esa respuesta no cambia ningun estado: acompana la emergencia que ya esta
+  activa.
+- [ ] No inicia una emergencia nueva.
+- [ ] No cancela rutina ni activa ningun modo fuera de emergencia.
 - [ ] No desbloquea ni bloquea botones.
 - [ ] Es solo un mensaje recibido desde el celular.
 
@@ -119,7 +128,7 @@ No documentamos aca duraciones ni valores. Solo la intencion.
 - [ ] Rutina: "se registro la accion".
 - [ ] Cancelacion: "se cerro/cancelo".
 - [ ] Emergencia: "alerta importante".
-- [ ] Amigo en camino: "recibiste respuesta del celular".
+- [ ] Te sigo: "recibiste respuesta del celular durante emergencia".
 - [ ] Reset de vinculacion: "se borro la relacion con el celular".
 
 ## 10. Casos que no nos podemos olvidar
@@ -139,5 +148,7 @@ No documentamos aca duraciones ni valores. Solo la intencion.
 - [ ] Triple click desconectado: emergencia inmediata y aviso pendiente para la app.
 - [ ] App confirma emergencia: Joya deja de insistir pero sigue en emergencia.
 - [ ] App cierra emergencia: Joya vuelve a uso normal.
-- [ ] App manda amigo en camino: Joya vibra, sin cambiar estado.
+- [ ] App manda "Te sigo" durante emergencia: Joya vibra, sin cambiar estado.
+- [ ] App intenta mandar "Te sigo" fuera de emergencia: Joya no deberia tratarlo
+  como un mensaje valido de uso.
 - [ ] Reset de vinculacion: Joya se olvida del celular y vuelve a empezar.
