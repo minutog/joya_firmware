@@ -35,6 +35,7 @@ The short source of truth for the current behavior is:
 
 - `docs/firmware_rules.md` - BLE timing, button rules, routine, emergency, friend-coming, and pairing reset.
 - `docs/ble_pairing_logic.md` - connection and claim model.
+- `docs/mvp_use_cases_checklist.md` - concise Spanish checklist of MVP use cases and usability requirements.
 
 High-level summary:
 
