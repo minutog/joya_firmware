@@ -1,10 +1,6 @@
 # Checklist MVP Joya - funcionamiento y casos de uso
 
-Este documento es una guia corta de comportamiento para el MVP de Joya. Esta
-pensado para que alguien que nunca vio el codigo pueda entender que tiene que
-pasar en cada estado, como se transiciona y que no nos podemos olvidar.
-
-No es una especificacion tecnica de BLE, tiempos, pines ni protocolo interno. Es
+Este documento es una guia corta de comportamiento para el MVP de Joya. No es una especificacion tecnica de BLE, tiempos, pines ni protocolo interno. Es
 un checklist de logica de producto.
 
 ## 1. Idea general
@@ -13,8 +9,6 @@ un checklist de logica de producto.
   pensar en conexion.
 - [ ] La app y Joya tienen que reencontrarse solas cuando vuelven a estar cerca o
   cuando vuelve Bluetooth.
-- [ ] Cuando algo falla, la app debe hablar en lenguaje de usuario: acercar Joya,
-  prender Bluetooth, intentar de nuevo. No mostrar errores internos del firmware.
 - [ ] El boton cambia de significado segun el estado, pero para el usuario tiene
   que sentirse consistente.
 - [ ] La emergencia siempre tiene prioridad.
