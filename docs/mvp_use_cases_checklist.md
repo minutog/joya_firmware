@@ -1,30 +1,13 @@
 # Checklist MVP Joya - funcionamiento y casos de uso
 
 Este documento es la lista corta de lo que tiene que cumplir el MVP de firmware de
-Joya desde uso y funcionamiento. No intenta explicar Zephyr, pines, CI ni detalles
-de produccion. La idea es que un developer de firmware pueda arrancar de cero y no
-se olvide de las reglas importantes.
-
-Fuente base: firmware actual, app demo, `docs/firmware_rules.md` y
-`docs/ble_pairing_logic.md`.
+Joya desde uso y funcionamiento.
 
 Leyenda:
 
 - `[x]` ya esta contemplado en el MVP actual.
 - `[ ]` falta implementar, probar o cerrar.
 - `[?]` hay una decision de producto/firmware para confirmar.
-
-## 1. Alcance del MVP
-
-- [x] Joya es el periferico BLE. El celular escanea, conecta y reconecta.
-- [x] El MVP cubre pairing/claim, reconexion, boton, haptics y mensajes basicos
-  entre Joya y la app.
-- [x] El claim es a nivel app, con `CLAIM:<app_id>`. En este MVP no usamos BLE
-  bonding.
-- [x] La Joya no queda visible todo el tiempo cuando esta sin claim: el usuario
-  abre setup con doble click.
-- [ ] Seguridad de produccion, bateria final, provisioning de IDs unicos y OTA
-  quedan fuera de esta pagina salvo cuando impactan la experiencia.
 
 ## 2. Estados principales
 
