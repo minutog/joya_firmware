@@ -131,9 +131,9 @@ On firmware reboot:
 - If `claimed=true`, Joya advertises for reconnect immediately.
 - If `claimed=false`, Joya waits for a double click before advertising setup.
 - `claimed` and `app_id` survive reboot.
-- The current prototype does not persist the emergency latch across reboot.
+- Reboot/reset gestures should be ignored while emergency is active. Emergency must first be cleared from the app with `EMERGENCY_OFF` or `CANCEL_EMERGENCY`; only then should a firmware reboot/reset path be available.
 
-Firmware developer note: decide with the app developer whether production emergency state must survive a firmware reboot. The mock currently focuses on connection mechanics, not full product safety persistence.
+Firmware developer note: a reboot path is only safe when Joya is not in emergency. If a recovery gesture is added later, it should preserve that rule.
 
 ### App reboot
 
@@ -237,6 +237,8 @@ These are the current firmware messages.
 
 Goal: deliberately forget the app/Joya relationship and allow setup again.
 
+This is not an emergency escape path. If emergency is active, the long hold should be ignored for reboot/reset purposes until the app clears emergency.
+
 ### Firmware side
 
 1. User holds the button for 15 seconds.
@@ -253,35 +255,22 @@ Goal: deliberately forget the app/Joya relationship and allow setup again.
 3. Do not reconnect automatically as if nothing happened.
 4. Wait for the user to start pairing again.
 
-## What Each Developer Should Own
+## Remaining Questions And Missing Work
 
-### Firmware developer
+### Firmware reboot and remembered devices
 
-- Keep BLE peripheral role and NUS UUIDs stable unless the app developer signs off.
-- Keep advertising names stable: `Joya Setup` for setup, `Joya` for claimed reconnect.
-- Persist `claimed` and `app_id`.
-- Own button gesture detection, haptic patterns, emergency retry timing, and pairing reset.
-- Send only documented text events unless the app developer has added support.
-- Restart advertising after disconnect so the app can reconnect.
+Open question: if the firmware reboots while Joya is not in emergency, how do we make sure the app does not create problems by remembering the previous device?
 
-### App developer
+The likely rule is that the app can remember the app-level Joya identity, but it should treat BLE runtime objects as disposable. After firmware reboot, the app should scan again, reconnect, rediscover RX/TX, subscribe again, and run the normal `PING` / `PONG:claimed=1` handshake instead of assuming old peripheral handles still work.
 
-- Keep BLE central role.
-- Scan for the NUS service UUID.
-- Discover RX/TX and subscribe to TX notifications on every new connection.
-- Make setup handshake idempotent: one `PING`, one `CLAIM` only when needed.
-- Own UI/product state for connected, routine, emergency, disconnected, and setup failure.
-- Always ACK `EVENT:EMERGENCY_ON`.
-- Send `EMERGENCY_OFF` when emergency is cancelled in the app.
-- Send `FRIEND_COMING` only when emergency is active, unless both teams change that product rule.
+Emergency is different: if emergency is active, firmware reboot/reset should not happen from the button. Holding the button should do nothing for reboot/reset while emergency is active. The app must first clear emergency with `EMERGENCY_OFF` or `CANCEL_EMERGENCY`; only after that should a reboot/reset gesture be accepted.
 
-## Open Decisions Before Production
+Follow-up question: if something gets stuck while Joya is not in emergency, do we need an extra recovery gesture, for example holding the button for even longer, to force a firmware reboot without erasing the pairing?
 
-These are not blockers for the mock, but both teams should align before the final firmware/app contract is frozen.
+### Friend emergency notification
 
-- Should BLE bonding or an app-level challenge/response replace the simple `CLAIM:<app_id>` model?
-- Should emergency state survive firmware reboot?
-- Should an acknowledged emergency be re-announced to the app after reconnect?
-- Should `FRIEND_COMING` be rejected by firmware when emergency is not active?
-- What should the app show if it finds a Joya that is already claimed by a different app?
-- Should `joya_id` be fixed, generated at manufacturing, or stored in flash?
+The current test app and firmware contract does not yet cover the case where this user's Joya should vibrate because one of their friends started an emergency.
+
+That requires a new phone-to-Joya message. The app would receive the friend's emergency through the app/backend side, then send a BLE command to this user's Joya so the bracelet can play a haptic pattern. This is different from `FRIEND_COMING`, which means someone is responding to this user's own emergency.
+
+This missing flow needs a message name, haptic pattern, and state rule. For example, the app might send something like `FRIEND_EMERGENCY` or `CONTACT_EMERGENCY_ON`, and firmware would vibrate without changing this user's local emergency state unless both teams decide otherwise.
