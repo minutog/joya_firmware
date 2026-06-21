@@ -1,0 +1,30 @@
+CONFIG_GPIO=y
+CONFIG_I2C=y
+
+# Persistent storage for the prototype app claim state.
+CONFIG_FLASH=y
+CONFIG_FLASH_PAGE_LAYOUT=y
+CONFIG_FLASH_MAP=y
+CONFIG_NVS=y
+CONFIG_SETTINGS=y
+CONFIG_SETTINGS_NVS=y
+
+# Bluetooth peripheral + Nordic UART Service.
+CONFIG_BT=y
+CONFIG_BT_PERIPHERAL=y
+CONFIG_BT_DEVICE_NAME="Joya"
+CONFIG_BT_MAX_CONN=1
+CONFIG_BT_ZEPHYR_NUS=y
+
+# Debug through RTT, not UART, because UART pins are not part of this prototype path.
+CONFIG_PRINTK=y
+CONFIG_CONSOLE=y
+CONFIG_USE_SEGGER_RTT=y
+CONFIG_RTT_CONSOLE=y
+CONFIG_UART_CONSOLE=n
+
+CONFIG_MAIN_STACK_SIZE=2048
+CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=2048
+
+# Matches Zephyr's settings sample requirement for nRF52 DK targets.
+CONFIG_ARM_MPU=n

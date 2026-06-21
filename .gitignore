@@ -2,6 +2,7 @@
 *.log
 
 # Zephyr / Nordic build outputs
+JoyaPhoneConnectionFirmware/zephyr_base/
 **/build/
 **/.west/
 *.hex

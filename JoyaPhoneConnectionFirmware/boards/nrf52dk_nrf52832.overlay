@@ -4,8 +4,8 @@
 
 / {
 	zephyr,user {
-		button_gpios = <&gpio0 24 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
-		haptic_en_gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+		button-gpios = <&gpio0 24 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+		haptic_en-gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
 	};
 };
 
@@ -32,8 +32,15 @@
 	pinctrl-0 = <&i2c0_default>;
 	pinctrl-1 = <&i2c0_sleep>;
 	pinctrl-names = "default", "sleep";
+
+	/* (to do) add haptic driver */
 };
 
 &uart0 {
 	status = "disabled";
+};
+
+// Just for solve the warning of using GPIO0_24
+&spi2 {
+        status = "disabled";
 };

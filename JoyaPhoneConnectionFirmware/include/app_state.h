@@ -2,6 +2,8 @@
 #define APP_STATE_H
 
 #include <stdbool.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/printk.h>
 
 typedef enum {
     STATE_UNPAIRED,
@@ -31,5 +33,6 @@ typedef enum {
 
 void process_event(event_type_t event);
 app_state_t get_current_state(void);
+void fsm_thread_loop(void);
 
 #endif // APP_STATE_H
