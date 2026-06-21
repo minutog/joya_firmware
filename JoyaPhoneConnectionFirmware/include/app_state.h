@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
+#include "ble_driver.h"
 
 typedef enum {
     STATE_UNPAIRED,
@@ -25,14 +26,18 @@ typedef enum {
     EV_BLE_CONNECTED,
     EV_BLE_DISCONNECTED,
     EV_BLE_TIMEOUT,
+    EV_BLE_NOTIFY_ENABLED,
+    EV_BLE_NOTIFY_DISABLED,
 
     // APPLICATION EVENTS
     EV_APP_CMD_STOP_EMERGENCY,     
-    EV_APP_CMD_FOLLOW_ME
+    EV_APP_CMD_FOLLOW_ME,
+    EV_APP_ACK_EMERGENCY
 } event_type_t;
 
 void process_event(event_type_t event);
 app_state_t get_current_state(void);
 void fsm_thread_loop(void);
+void scheduler_retry(void);
 
 #endif // APP_STATE_H

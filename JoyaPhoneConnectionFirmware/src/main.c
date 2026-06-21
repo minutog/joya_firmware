@@ -14,6 +14,12 @@ int main(void) {
         return -1;
     }
 
+    ret = ble_driver_init();
+    if (ret) {
+        LOG_ERR("Fallo al iniciar BLE. Error: %d", ret);
+        return -1;
+    }
+
     LOG_INF("Boton inicializado correctamente. Esperando eventos...");
 
     fsm_thread_loop();

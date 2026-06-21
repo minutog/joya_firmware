@@ -24,6 +24,10 @@ static int cmd_send_event(const struct shell *sh, size_t argc, char **argv) {
             ev = EV_BTN_EMERGENCY;
             is_val = 1;
             break;
+        case 's':
+            ev = EV_APP_CMD_STOP_EMERGENCY;
+            is_val = 1;
+            break;
         case 'c':
             ev = EV_BLE_CONNECTED;
             is_val = 1;

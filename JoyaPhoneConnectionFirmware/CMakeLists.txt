@@ -15,7 +15,7 @@ target_sources(app PRIVATE
     src/main.c
     src/app_comm.c
     src/app_state.c
-    src/bt_driver.c
+    src/ble_driver.c
     src/button.c
     src/haptics.c
     src/fsm_shell.c
