@@ -8,6 +8,7 @@ uint8_t current_retry_index = 0;
 
 LOG_MODULE_REGISTER(app_state_mod, LOG_LEVEL_INF);
 
+static struct k_work_delayable connection_timeout_work;
 static struct k_work_delayable emergency_retry_work;
 extern uint8_t current_retry_index;
 
@@ -28,6 +29,11 @@ static void emergency_retry_work_handler(struct k_work *work) {
     increment_emergency_retry_index();
 }
 
+static void connection_timeout_work_handler(struct k_work *work) {
+    event_type_t ev = EV_BLE_TIMEOUT;
+    k_msgq_put(&event_queue, &ev, K_NO_WAIT);
+}
+
 void reset_emergency_retry_index(void) {
     current_retry_index = 0;
 }
@@ -39,6 +45,7 @@ app_state_t get_current_state(void) {
 
 void fsm_thread_loop(void) {
     k_work_init_delayable(&emergency_retry_work, emergency_retry_work_handler);
+    k_work_init_delayable(&connection_timeout_work, connection_timeout_work_handler);
 
     event_type_t event;
     while (1) {
@@ -109,6 +116,7 @@ void process_event(event_type_t event) {
                 current_state = STATE_SETUP_MODE;
                 printk("FROM: STATE_UNPAIRED TO: STATE_SETUP_MODE\n");
                 ble_start_setup_advertising();
+                k_work_reschedule(&connection_timeout_work, K_MSEC(BLE_SETUP_TIMEOUT_MS)); 
             }
             break;
 
@@ -117,6 +125,10 @@ void process_event(event_type_t event) {
                 current_state = STATE_CONNECTED;
                 printk("FROM: STATE_SETUP_MODE TO: STATE_CONNECTED\n");
                 ble_stop_advertising();
+            } else if (event == EV_BLE_TIMEOUT) {
+                current_state = STATE_UNPAIRED;
+                ble_stop_advertising();
+                printk("FROM: STATE_SETUP_MODE TO: STATE_UNPAIRED (timeout)\n");
             }
             break;
 

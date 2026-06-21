@@ -6,6 +6,8 @@
 #include <zephyr/sys/printk.h>
 #include "ble_driver.h"
 
+#define BLE_SETUP_TIMEOUT_MS 90000
+
 typedef enum {
     STATE_UNPAIRED,
     STATE_SETUP_MODE,

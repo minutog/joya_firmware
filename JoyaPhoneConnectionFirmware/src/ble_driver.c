@@ -10,17 +10,6 @@
 
 extern struct k_msgq event_queue;
 
-
-LOG_MODULE_REGISTER(ble_driver, LOG_LEVEL_INF);
-
-// --- UUIDs del Servicio Custom de JOYA ---
-// Servicio principal (Generado aleatoriamente para este ejemplo)
-#define BT_UUID_JOYA_SERVICE_VAL BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef0)
-// Característica TX (JOYA avisa a la App)
-#define BT_UUID_JOYA_TX_VAL      BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef1)
-// Característica RX (La App le escribe a JOYA)
-#define BT_UUID_JOYA_RX_VAL      BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef2)
-
 static struct bt_uuid_128 joya_svc_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_SERVICE_VAL);
 static struct bt_uuid_128 joya_tx_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_TX_VAL);
 static struct bt_uuid_128 joya_rx_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_RX_VAL);

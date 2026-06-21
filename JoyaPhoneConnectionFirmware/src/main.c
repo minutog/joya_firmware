@@ -2,6 +2,7 @@
 #include <zephyr/logging/log.h>
 #include "button.h"
 #include "app_state.h"
+
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
 int main(void) {
