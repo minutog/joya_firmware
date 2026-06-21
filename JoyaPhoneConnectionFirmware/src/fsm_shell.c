@@ -1,9 +1,14 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/kernel.h>
 #include "app_state.h"
-extern struct k_msgq event_queue;
 
-// Función que se ejecutará cuando escribas "joya_ev <numero>"
+/**
+ * @brief Function to send an event to the FSM through the message queue.
+ * @param sh Shell context (provided by Zephyr shell)
+ * @param argc Argument count (number of arguments passed to the command)
+ * @param argv Argument vector (array of strings representing the arguments)
+ * @return 0 on success, or an error code if the event could not be sent
+ */
 static int cmd_send_event(const struct shell *sh, size_t argc, char **argv) {
     // argv[1] es el primer argumento (el número de evento)
     char event = argv[1][0];
@@ -58,7 +63,7 @@ static int cmd_send_event(const struct shell *sh, size_t argc, char **argv) {
     }
 
     // Inyectamos en la cola
-    int ret = k_msgq_put(&event_queue, &ev, K_NO_WAIT);
+    int ret = add_event(ev);
     
     if (ret == 0) {
         shell_print(sh, "Evento %c enviado correctamente a la FSM", ev);

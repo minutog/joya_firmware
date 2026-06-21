@@ -23,12 +23,10 @@ static volatile uint32_t pulse_count = 0;
 int button_init(void) {
     int ret;
 
-    // 1. Verificar si el hardware existe
     if (!gpio_is_ready_dt(&button)) {
         return -ENODEV;
     }
 
-    // 2. Configurar el pin como entrada con interrupción (Flanco BAJADA y SUBIDA)
     ret = gpio_pin_configure_dt(&button, GPIO_INPUT);
     if (ret != 0) {
         return ret;
@@ -102,8 +100,11 @@ static void click_window_work_handler(struct k_work *work) {
     event_type_t event_to_send;
     int count = pulse_count;
     pulse_count = 0;
-    //LOG_INF("Ventana cerrada. Clics contados: %d", count);
 
+    if(count == 0){
+        // No clicks detected, this can happen if the user just pressed and released the button without waiting for the click window to expire. In this case, we won't send any event.
+        return;
+    } else
     if(count == 1){
         // Handle single click
         event_to_send = EV_BTN_1_PULSE;
@@ -115,6 +116,6 @@ static void click_window_work_handler(struct k_work *work) {
         event_to_send = EV_BTN_EMERGENCY;
     }
 
-    k_msgq_put(&event_queue, &event_to_send, K_NO_WAIT);
+    add_event(event_to_send);
 
 }

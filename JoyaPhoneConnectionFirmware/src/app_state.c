@@ -1,46 +1,74 @@
 #include "app_state.h"
-#include "app_comm.h"
-#include "ble_driver.h"
-
-#include <zephyr/logging/log.h>
-const uint32_t EMERGENCY_RETRY_MS[] = {1000, 2000, 5000, 10000, 30000}; // Retry intervals in milliseconds
-uint8_t current_retry_index = 0;
 
 LOG_MODULE_REGISTER(app_state_mod, LOG_LEVEL_INF);
 
-static struct k_work_delayable connection_timeout_work;
-static struct k_work_delayable emergency_retry_work;
-extern uint8_t current_retry_index;
+/** @brief Array of retry intervals for emergency events in milliseconds */
+const uint32_t EMERGENCY_RETRY_MS[] = {1000, 2000, 5000, 10000, 30000};
 
+/** @brief Current index for emergency retry intervals */
+uint8_t current_retry_index = 0;
+
+/** @brief Work structure for connection timeout */
+static struct k_work_delayable connection_timeout_work;
+/** @brief Work structure for emergency retry */
+static struct k_work_delayable emergency_retry_work;
+
+/** @brief Current application state */
 static volatile app_state_t current_state = STATE_UNPAIRED;
+/** @brief Message queue for events */
 K_MSGQ_DEFINE(event_queue, sizeof(event_type_t), 10, 4);
 
+/** @brief Thread for the finite state machine */
+K_THREAD_DEFINE(fsm_thread_id, 1024, fsm_thread_loop, NULL, NULL, NULL, 5, 0, 0);
+
+/**
+ * PRIVATE FUNCTIONS
+ */
+
+/** @brief Increment the emergency retry index */
 void increment_emergency_retry_index(void) {
     if (current_retry_index < sizeof(EMERGENCY_RETRY_MS)/sizeof(EMERGENCY_RETRY_MS[0]) - 1) {
         current_retry_index++;
     }
 }
 
+/** @brief Reset the emergency retry index */
+void reset_emergency_retry_index(void) {
+    current_retry_index = 0;
+}
+
+/**
+ * WORK HANDLERS
+ */
+
+/** @brief Work handler for emergency retry 
+ * This function is called when the emergency retry work is executed. It sends the emergency command to the phone and reschedules itself based on the current retry interval.
+ * 
+*/
 static void emergency_retry_work_handler(struct k_work *work) {
-    // This function is called when the emergency retry timer expires
-    // We will send the emergency command again and reschedule the work
     ble_send_event_secure(COMMAND_EMERGENCY);
     k_work_reschedule(&emergency_retry_work, K_MSEC(EMERGENCY_RETRY_MS[current_retry_index]));
     increment_emergency_retry_index();
 }
 
+/** @brief Work handler for connection timeout 
+ * This function is called when the connection timeout work is executed. It adds a timeout event to the event queue.
+*/
 static void connection_timeout_work_handler(struct k_work *work) {
     event_type_t ev = EV_BLE_TIMEOUT;
     k_msgq_put(&event_queue, &ev, K_NO_WAIT);
 }
 
-void reset_emergency_retry_index(void) {
-    current_retry_index = 0;
-}
-
+/**
+ * PUBLIC API
+ */
 
 app_state_t get_current_state(void) {
     return current_state;
+}
+
+int add_event(event_type_t event) {
+    return k_msgq_put(&event_queue, &event, K_NO_WAIT);
 }
 
 void fsm_thread_loop(void) {
@@ -53,10 +81,6 @@ void fsm_thread_loop(void) {
         process_event(event);
     }
 }
-
-K_THREAD_DEFINE(fsm_thread_id, 1024, fsm_thread_loop, NULL, NULL, NULL, 5, 0, 0);
-
-
 
 void scheduler_retry(void){
     k_work_reschedule(&emergency_retry_work, K_MSEC(EMERGENCY_RETRY_MS[current_retry_index]));
