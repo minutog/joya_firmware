@@ -7,6 +7,7 @@ LOG_MODULE_REGISTER(ble_driver, LOG_LEVEL_INF);
 static struct bt_uuid_128 joya_svc_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_SERVICE_VAL);
 static struct bt_uuid_128 joya_tx_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_TX_VAL);
 static struct bt_uuid_128 joya_rx_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_RX_VAL);
+static struct bt_uuid_128 joya_rx_auth_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_RX_AUTH);
 
 /** @brief Current connection */
 static struct bt_conn *current_conn = NULL;
@@ -43,6 +44,11 @@ static void on_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value) {
 static ssize_t on_rx_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                            const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
     return on_rx_write_handler(conn, attr, buf, len, offset, flags);
+}
+
+static ssize_t on_rx_auth_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+    return on_rx_auth_write_handler(conn, attr, buf, len, offset, flags);
 }
 
 /** @brief Callback for when a Bluetooth connection is established.
@@ -96,13 +102,20 @@ BT_GATT_SERVICE_DEFINE(joya_svc,
                            BT_GATT_CHRC_NOTIFY,
                            BT_GATT_PERM_NONE,
                            NULL, NULL, NULL),
+
     BT_GATT_CCC(on_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
     
     // RX Characteristic UUID: supports Write and Write Without Response
     BT_GATT_CHARACTERISTIC(&joya_rx_uuid.uuid,
                            BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
                            BT_GATT_PERM_WRITE,
-                           NULL, on_rx_write, NULL)
+                           NULL, on_rx_write, NULL),
+
+    // RX AUTH Characteristic UUID: supports Write and Write Without Response (to do: maybe add some security requirements)
+    BT_GATT_CHARACTERISTIC(&joya_rx_auth_uuid.uuid,
+                           BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+                           BT_GATT_PERM_WRITE,
+                           NULL, on_rx_auth_write, NULL)
 );
 
 /** @brief Defines the advertising data for the Joya device.
@@ -183,13 +196,16 @@ int ble_stop_advertising(void) {
 
 int ble_send_event_secure(uint8_t event_byte) {
     if (current_conn == NULL) {
-        LOG_WRN("BLE disconnected, retrying...");
+        LOG_WRN("BLE disconnected");
         // Optional: reconnecting (to do)
         return -ENOTCONN;
     }
     return ble_send_notify(event_byte);
 }
 
+bool is_ble_connected(void) {
+    return current_conn != NULL;
+}
 
 void ble_force_reset(void) {
     if (current_conn) {

@@ -3,6 +3,7 @@
 
 #include "ble_driver.h"
 #include "app_comm.h"
+#include "flash_memory.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -11,10 +12,14 @@
 #include <zephyr/logging/log.h>
 
 #define BLE_SETUP_TIMEOUT_MS 90000
+#define BLE_SETUP_WAITING_IDENTIFIER_TIMEOUT_MS 30000
 
 typedef enum {
     STATE_UNPAIRED,
     STATE_SETUP_MODE,
+    STATE_SETUP_WAITING_IDENTIFIER,
+    STATE_SETUP_WAITING_NEW_IDENTIFIER,
+    //STATE_NOT_AUTHORIZED,
     STATE_BONDED_DISCONNECTED,
     STATE_CONNECTED,
     STATE_EMERGENCY
@@ -38,7 +43,8 @@ typedef enum {
     // APPLICATION EVENTS
     EV_APP_CMD_STOP_EMERGENCY,     
     EV_APP_CMD_FOLLOW_ME,
-    EV_APP_ACK_EMERGENCY
+    EV_APP_ACK_EMERGENCY,
+    EV_APP_IDENTIFIER_RECEIVED
 } event_type_t;
 
 /** @brief Process an event
