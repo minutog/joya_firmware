@@ -57,35 +57,13 @@ static ssize_t on_rx_auth_write(struct bt_conn *conn, const struct bt_gatt_attr 
  * @param conn The Bluetooth connection.
  * @param err The error code (0 if no error).
  */
-/*static void on_connected(struct bt_conn *conn, uint8_t err) {
-    if (err) {
-        LOG_ERR("Connection error: %d", err);
-        return;
-    }
-    current_conn = bt_conn_ref(conn);
-    LOG_INF("Phone connected");
-
-    on_connected_handler(conn, err);
-}*/
 static void on_connected(struct bt_conn *conn, uint8_t err) {
     if (err) {
         LOG_ERR("Connection error: %d", err);
         return;
     }
-
     current_conn = bt_conn_ref(conn);
     LOG_INF("Phone connected");
-
-    struct bt_conn_info info;
-    int ret = bt_conn_get_info(conn, &info);
-    if (ret == 0 && info.type == BT_CONN_TYPE_LE) {
-        LOG_INF("Conn params: interval=%u units (%u ms), latency=%u, timeout=%u units (%u ms)",
-                info.le.interval,
-                info.le.interval * 125 / 100,
-                info.le.latency,
-                info.le.timeout,
-                info.le.timeout * 10);
-    }
 
     on_connected_handler(conn, err);
 }

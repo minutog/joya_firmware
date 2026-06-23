@@ -12,6 +12,8 @@
 
 // --- UUIDs of JOYA custom service ---
 // Main service UUID
+
+// (to do): create random UUIDs for production, these are just examples
 #define BT_UUID_JOYA_SERVICE_VAL BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef0)
 // TX Characteristic UUID
 #define BT_UUID_JOYA_TX_VAL      BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef1)

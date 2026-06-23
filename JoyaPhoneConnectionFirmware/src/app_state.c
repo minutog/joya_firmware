@@ -288,18 +288,12 @@ void process_event(event_type_t event) {
             case EV_BTN_2_PULSE:
                 /*
                 * Normal app actions are ignored while emergency is active.
-                * Optional: haptic feedback here.
                 */
                 LOG_INF("Event ignored: emergency active");
                 return;
 
             default:
-                /*
-                * Important:
-                * Do NOT return here.
-                * Let BLE connection/authentication events continue
-                * through the normal FSM.
-                */
+                // Keep processing other events that are not related to emergency
                 break;
         }
     }
