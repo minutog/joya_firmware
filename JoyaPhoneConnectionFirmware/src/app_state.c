@@ -24,6 +24,7 @@ K_MSGQ_DEFINE(event_queue, sizeof(event_type_t), 10, 4);
 K_THREAD_DEFINE(fsm_thread_id, 4098, fsm_thread_loop, NULL, NULL, NULL, 5, 0, 0);
 
 extern uint8_t joya_app_id[SIZE_APP_ID];
+static bool emergency_alerts_active = false;
 
 /**
  * PRIVATE FUNCTIONS
@@ -41,6 +42,14 @@ void reset_emergency_retry_index(void) {
     current_retry_index = 0;
 }
 
+static void emergency_stop_alerts(void)
+{
+    emergency_alerts_active = false;
+    k_work_cancel_delayable(&emergency_retry_work);
+    reset_emergency_retry_index();
+}
+
+
 /**
  * WORK HANDLERS
  */
@@ -57,16 +66,33 @@ static void emergency_schedule_next_retry(void)
 
 static void emergency_restart_alerts(void)
 {
+    emergency_alerts_active = true;
+
     k_work_cancel_delayable(&emergency_retry_work);
     reset_emergency_retry_index();
 
-    ble_send_event_secure(COMMAND_EMERGENCY);
+    if (current_state != STATE_AUTHENTICATED) {
+        return;
+    }
 
+    ble_send_event_secure(COMMAND_EMERGENCY);
     emergency_schedule_next_retry();
 }
 
 static void emergency_retry_work_handler(struct k_work *work)
 {
+    if (!is_in_emergency()) {
+        return;
+    }
+
+    if (!emergency_alerts_active) {
+        return;
+    }
+
+    if (current_state != STATE_AUTHENTICATED) {
+        return;
+    }
+
     ble_send_event_secure(COMMAND_EMERGENCY);
     emergency_schedule_next_retry();
 }
@@ -128,83 +154,157 @@ void scheduler_retry(void){
     k_work_reschedule(&emergency_retry_work, K_MSEC(EMERGENCY_RETRY_MS[current_retry_index]));
 }
 
+/** FOR DEBUGGING */
+static const char *event_to_str(event_type_t event)
+{
+    switch (event) {
+    case EV_BTN_EMERGENCY: return "EV_BTN_EMERGENCY";
+    case EV_BTN_1_PULSE: return "EV_BTN_1_PULSE";
+    case EV_BTN_2_PULSE: return "EV_BTN_2_PULSE";
+    case EV_BTN_LONG_PRESS: return "EV_BTN_LONG_PRESS";
+    case EV_BTN_FACTORY_RESET: return "EV_BTN_FACTORY_RESET";
+    case EV_BLE_CONNECTED: return "EV_BLE_CONNECTED";
+    case EV_BLE_DISCONNECTED: return "EV_BLE_DISCONNECTED";
+    case EV_BLE_NOTIFY_ENABLED: return "EV_BLE_NOTIFY_ENABLED";
+    case EV_APP_IDENTIFIER_RECEIVED: return "EV_APP_IDENTIFIER_RECEIVED";
+    case EV_APP_AUTHENTICATED: return "EV_APP_AUTHENTICATED";
+    case EV_APP_ACK_EMERGENCY: return "EV_APP_ACK_EMERGENCY";
+    case EV_APP_CMD_STOP_EMERGENCY: return "EV_APP_CMD_STOP_EMERGENCY";
+    case EV_APP_CMD_FOLLOW_ME: return "EV_APP_CMD_FOLLOW_ME";
+    case EV_BLE_TIMEOUT: return "EV_BLE_TIMEOUT";
+    default: return "UNKNOWN_EVENT";
+    }
+}
+/********** */
+
 void process_event(event_type_t event) {
     // Global filter for emergency events
-    if(is_in_emergency() && event == EV_BLE_AUTH_AND_NOTIFY){
-        ble_send_event_secure(COMMAND_EMERGENCY);
-        reset_emergency_retry_index();
-        k_work_reschedule(&emergency_retry_work, K_MSEC(EMERGENCY_RETRY_MS[current_retry_index]));
-        LOG_INF("FROM: %d TO: STATE_EMERGENCY\n", current_state);
-        current_state = STATE_EMERGENCY;
-        return;
+    LOG_INF("process_event: %s, state=%d, emergency=%d, alerts_active=%d, retry_idx=%d",
+        event_to_str(event),
+        current_state,
+        is_in_emergency(),
+        emergency_alerts_active,
+        current_retry_index);
 
-    } else if(event == EV_BTN_EMERGENCY){ 
+    if (event == EV_BTN_EMERGENCY) {
         storage_save_emergency_state(true);
-        if(current_state == STATE_CONNECTED){
-            // haptic feedback to user
-            ble_send_event_secure(COMMAND_EMERGENCY);
-            reset_emergency_retry_index();
-            k_work_reschedule(&emergency_retry_work, K_MSEC(EMERGENCY_RETRY_MS[current_retry_index]));
-            LOG_INF("FROM: %d TO: STATE_EMERGENCY\n", current_state);
 
-        } else if(current_state == STATE_EMERGENCY){
-            // (to do) haptic feedback to user?
-            reset_emergency_retry_index();
+        if (current_state == STATE_AUTHENTICATED) {
+            LOG_INF("Emergency triggered/re-triggered while secure channel ready");
             emergency_restart_alerts();
-            
-        } else if (current_state == STATE_UNPAIRED || current_state == STATE_SETUP_MODE || current_state == STATE_SETUP_WAITING_IDENTIFIER || current_state == STATE_SETUP_WAITING_NEW_IDENTIFIER){
-            LOG_INF("REMAINS IN THE SAME STATE BUT SAVES EMERGENCY STATE TO SEND AS SOON AS CONNECTED\n");
             return;
         }
-        else {
-            // (to do) maybe reforce advertisement procedure to reconnect to the phone faster
-            LOG_INF("TO: STATE_EMERGENCY - WAITING TO CONNECT FOR SENDING ALERT\n");
+
+        k_work_cancel_delayable(&emergency_retry_work);
+        reset_emergency_retry_index();
+
+        LOG_INF("Emergency active, waiting for secure channel");
+
+        if (current_state == STATE_BONDED_DISCONNECTED) {
+            ble_start_reconnect_advertising();
+        } else if (current_state == STATE_UNPAIRED && !is_app_id_empty()) {
+            current_state = STATE_BONDED_DISCONNECTED;
+            ble_start_reconnect_advertising();
+        } else if (current_state == STATE_UNPAIRED && is_app_id_empty()) {
+            current_state = STATE_SETUP_MODE;
+            ble_start_setup_advertising();
+            k_work_reschedule(&connection_timeout_work, K_MSEC(BLE_SETUP_TIMEOUT_MS));
         }
-        
-        current_state = STATE_EMERGENCY;
-        
-
-        // If the device is not connected to the phone, the next EV_BLE_CONNECTED event will trigger the conditional on STATE_EMERGENCY and send the emergency command to the phone. This way, we can ensure that the emergency command is sent as soon as the connection is established
-
-        // Should send a haptic if the phone is not connected?
 
         return;
+    }
 
+    if (is_in_emergency()) {
+        switch (event) {
+            case EV_BTN_FACTORY_RESET:
+                LOG_INF("Factory reset ignored: emergency active");
+                return;
+
+            case EV_APP_ACK_EMERGENCY:
+                emergency_stop_alerts();
+                LOG_INF("Emergency acknowledged, retries stopped");
+                return;
+
+            case EV_APP_CMD_STOP_EMERGENCY:
+                emergency_stop_alerts();
+                storage_save_emergency_state(false);
+                LOG_INF("Emergency stopped");
+                return;
+
+                /*
+                if (current_state != STATE_BONDED_DISCONNECTED &&
+                    current_state != STATE_UNPAIRED) {
+                    current_state = STATE_AUTHENTICATED;
+                } // only for be sure if there is a disconnection during the emergency
+                // (to do): review
+                */
+
+                LOG_INF("Emergency stopped");
+                return;
+
+            case EV_BLE_TIMEOUT:
+                LOG_INF("Emergency active: BLE timeout, keeping/restarting advertising");
+
+                if (is_app_id_empty()) {
+                    current_state = STATE_SETUP_MODE;
+                    ble_start_setup_advertising();
+                    k_work_reschedule(&connection_timeout_work, K_MSEC(BLE_SETUP_TIMEOUT_MS));
+                } else {
+                    current_state = STATE_BONDED_DISCONNECTED;
+                    ble_start_reconnect_advertising();
+                }
+
+                return;
+
+            case EV_BLE_DISCONNECTED:
+                emergency_stop_alerts();
+
+                if (is_app_id_empty()) {
+                    current_state = STATE_SETUP_MODE;
+                    ble_start_setup_advertising();
+                    k_work_reschedule(&connection_timeout_work, K_MSEC(BLE_SETUP_TIMEOUT_MS));
+                    LOG_INF("Emergency active: disconnected, restarting setup advertising");
+                } else {
+                    current_state = STATE_BONDED_DISCONNECTED;
+                    ble_start_reconnect_advertising();
+                    LOG_INF("Emergency active: disconnected, reconnecting");
+                }
+
+                return;
+            case EV_APP_AUTHENTICATED:
+                /*
+                * Authenticated again while emergency is still active:
+                * restart the alert timing table and send immediately.
+                */
+                current_state = STATE_AUTHENTICATED;
+                emergency_restart_alerts();
+
+                LOG_INF("Emergency active after auth, alerts restarted");
+                return;
+
+            case EV_BTN_1_PULSE:
+            case EV_BTN_LONG_PRESS:
+            case EV_APP_CMD_FOLLOW_ME:
+            case EV_BTN_2_PULSE:
+                /*
+                * Normal app actions are ignored while emergency is active.
+                * Optional: haptic feedback here.
+                */
+                LOG_INF("Event ignored: emergency active");
+                return;
+
+            default:
+                /*
+                * Important:
+                * Do NOT return here.
+                * Let BLE connection/authentication events continue
+                * through the normal FSM.
+                */
+                break;
+        }
     }
 
     switch (current_state) {
-        case STATE_EMERGENCY:
-            if(event == EV_BLE_AUTH_AND_NOTIFY){
-                // (to do) haptic feedback to user
-                // it does not change the state
-                ble_send_event_secure(COMMAND_EMERGENCY);
-                LOG_INF("FROM: STATE_EMERGENCY TO: STATE_EMERGENCY\n");
-                reset_emergency_retry_index();
-                k_work_reschedule(&emergency_retry_work, K_MSEC(EMERGENCY_RETRY_MS[current_retry_index]));
-            } else if(event == EV_APP_CMD_FOLLOW_ME){
-                // (to do) haptic
-            }
-            else if (event == EV_APP_CMD_STOP_EMERGENCY) {
-                // (to do) haptic feedback to user?
-                // just in case its stops before ack
-                k_work_cancel_delayable(&emergency_retry_work);
-                storage_save_emergency_state(false);
-                LOG_INF("FROM: STATE_EMERGENCY TO: STATE_CONNECTED\n");
-                current_state = STATE_CONNECTED;
-            } else if(event == EV_APP_ACK_EMERGENCY){
-                // (to do) haptic feedback to user?
-                k_work_cancel_delayable(&emergency_retry_work);
-                LOG_INF("FROM: STATE_EMERGENCY TO: STATE_EMERGENCY (acknowledged)\n");
-            } else if(event == EV_BLE_DISCONNECTED){
-                // (to do) maybe reforce advertisement procedure to reconnect to the phone faster
-
-                k_work_cancel_delayable(&emergency_retry_work);
-                ble_start_reconnect_advertising();
-                current_state = STATE_BONDED_DISCONNECTED;
-                LOG_INF("FROM STATE_EMERGENCY - PHONE DISCONNECTED - STARTING ADVERTISING\n");
-            }
-            break;
-
         case STATE_UNPAIRED:
             if (event == EV_BTN_2_PULSE) {
                 current_state = STATE_SETUP_MODE;
@@ -214,22 +314,25 @@ void process_event(event_type_t event) {
             }
             break;
 
-        case STATE_SETUP_MODE:
-            if (event == EV_BLE_CONNECTED) {
-                current_state = STATE_WAITING_NOTIFICATION_ENABLE;
-                LOG_INF("FROM: STATE_SETUP_MODE TO: STATE_WAITING_NOTIFICATION_ENABLE\n");
-                ble_stop_advertising();
-            } else if (event == EV_BLE_TIMEOUT) {
-                current_state = STATE_UNPAIRED;
-                LOG_INF("FROM: STATE_SETUP_MODE TO: STATE_UNPAIRED (timeout)\n");
-                ble_stop_advertising();
-            } else if (event == EV_BLE_DISCONNECTED) {
-                current_state = STATE_UNPAIRED;
-                LOG_INF("FROM: STATE_SETUP_MODE TO: STATE_UNPAIRED (disconnected)\n");
-                ble_stop_advertising();
-            }
-            k_work_cancel_delayable(&connection_timeout_work);
-            break;
+            case STATE_SETUP_MODE:
+                if (event == EV_BLE_CONNECTED) {
+                    k_work_cancel_delayable(&connection_timeout_work);
+                    current_state = STATE_WAITING_NOTIFICATION_ENABLE;
+                    LOG_INF("FROM: STATE_SETUP_MODE TO: STATE_WAITING_NOTIFICATION_ENABLE\n");
+                    ble_stop_advertising();
+
+                } else if (event == EV_BLE_TIMEOUT) {
+                    current_state = STATE_UNPAIRED;
+                    LOG_INF("FROM: STATE_SETUP_MODE TO: STATE_UNPAIRED (timeout)\n");
+                    ble_stop_advertising();
+
+                } else if (event == EV_BLE_DISCONNECTED) {
+                    k_work_cancel_delayable(&connection_timeout_work);
+                    current_state = STATE_UNPAIRED;
+                    LOG_INF("FROM: STATE_SETUP_MODE TO: STATE_UNPAIRED (disconnected)\n");
+                    ble_stop_advertising();
+                }
+                break;
 
         case STATE_WAITING_NOTIFICATION_ENABLE:
             if (event == EV_BLE_NOTIFY_ENABLED) {
@@ -256,11 +359,11 @@ void process_event(event_type_t event) {
             if(event == EV_APP_IDENTIFIER_RECEIVED){
                 // k_work_cancel_delayable(&authentification_timeout_work);
                 if(save_received_app_id() == 0){
-                    current_state = STATE_CONNECTED;
+                    current_state = STATE_AUTHENTICATED;
                     k_work_cancel_delayable(&connection_timeout_work);
                     ble_send_event_secure(COMMAND_ACK_AUTH);
-                    LOG_INF("APP_ID SAVED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_CONNECTED\n");
-                    add_event(EV_BLE_AUTH_AND_NOTIFY);
+                    LOG_INF("APP_ID SAVED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_AUTHENTICATED\n");
+                    add_event(EV_APP_AUTHENTICATED);
                     return;
                 } else {
                     ble_send_event_secure(COMMAND_NACK_AUTH);
@@ -279,11 +382,11 @@ void process_event(event_type_t event) {
             if(event == EV_APP_IDENTIFIER_RECEIVED){
                 k_work_cancel_delayable(&authentification_timeout_work);
                 if(check_app_id(joya_app_id) == 0){
-                    current_state = STATE_CONNECTED;
+                    current_state = STATE_AUTHENTICATED;
                     k_work_cancel_delayable(&connection_timeout_work);
-                    LOG_INF("APP_ID CHECKED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_CONNECTED\n");
+                    LOG_INF("APP_ID CHECKED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_AUTHENTICATED\n");
                     ble_send_event_secure(COMMAND_ACK_AUTH);
-                    add_event(EV_BLE_AUTH_AND_NOTIFY);
+                    add_event(EV_APP_AUTHENTICATED);
                     return;
                 } else {
                     // current_state = STATE_BONDED_DISCONNECTED;
@@ -299,19 +402,19 @@ void process_event(event_type_t event) {
             }
             break;
 
-        case STATE_CONNECTED:
+        case STATE_AUTHENTICATED:
             if (event == EV_BLE_DISCONNECTED) {
                 current_state = STATE_BONDED_DISCONNECTED;
                 ble_start_reconnect_advertising();
-                LOG_INF("FROM: STATE_CONNECTED TO: STATE_BONDED_DISCONNECTED\n");
+                LOG_INF("FROM: STATE_AUTHENTICATED TO: STATE_BONDED_DISCONNECTED\n");
             } else if (event == EV_BTN_1_PULSE) {
                 // (to do): haptic
                 ble_send_event_secure(COMMAND_ROUTINE);
-                LOG_INF("FROM: STATE_CONNECTED TO: STATE_CONNECTED (routine command sent)\n");
+                LOG_INF("FROM: STATE_AUTHENTICATED TO: STATE_AUTHENTICATED (routine command sent)\n");
             } else if (event == EV_BTN_LONG_PRESS) {
                 // (to do): send routine end command to phone
                 ble_send_event_secure(COMMAND_END_ROUTINE);
-                LOG_INF("FROM: STATE_CONNECTED TO: STATE_CONNECTED (routine end command sent)\n");
+                LOG_INF("FROM: STATE_AUTHENTICATED TO: STATE_AUTHENTICATED (routine end command sent)\n");
             }
             break;
 
@@ -327,14 +430,11 @@ void process_event(event_type_t event) {
             break;
     }
 
-    if(event == EV_BTN_FACTORY_RESET /*&& current_state != STATE_EMERGENCY*/){
-        if(!is_in_emergency()){
-            LOG_INF("FROM: %d TO: STATE_UNPAIRED\n", current_state);
-            current_state = STATE_UNPAIRED;
-            ble_force_reset();
-            storage_factory_reset();
-        } else {
-            LOG_INF("FACTORY RESET IGNORED: DEVICE IS IN EMERGENCY STATE\n");
-        }
+    if (event == EV_BTN_FACTORY_RESET) {
+        LOG_INF("FROM: %d TO: STATE_UNPAIRED\n", current_state);
+        current_state = STATE_UNPAIRED;
+        ble_force_reset();
+        storage_factory_reset();
+        return;
     }
 }
