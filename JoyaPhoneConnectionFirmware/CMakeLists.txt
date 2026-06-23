@@ -18,7 +18,6 @@ target_sources(app PRIVATE
     src/ble_driver.c
     src/button.c
     src/haptics.c
-    src/fsm_shell.c
     src/flash_memory.c
 )
 

@@ -62,4 +62,8 @@ int ble_stop_advertising(void);
  */
 void ble_force_reset(void);
 
+bool is_notif_enabled(void);
+bool is_authenticated(void);
+void set_authenticated(bool auth_status);
+
 #endif // BLE_DRIVER_H

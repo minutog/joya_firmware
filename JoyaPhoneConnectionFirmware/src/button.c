@@ -99,6 +99,7 @@ void button_isr_handler(const struct device *dev, struct gpio_callback *cb, uint
 static void click_window_work_handler(struct k_work *work) {
     event_type_t event_to_send;
     int count = pulse_count;
+    bool valid_event = false;
     pulse_count = 0;
 
     if(count == 0){
@@ -108,14 +109,19 @@ static void click_window_work_handler(struct k_work *work) {
     if(count == 1){
         // Handle single click
         event_to_send = EV_BTN_1_PULSE;
+        valid_event = true;
     } else if(count == 2){
         // Handle double click
         event_to_send = EV_BTN_2_PULSE;
+        valid_event = true;
     } else if(count > 2){
         // Launch emergency
         event_to_send = EV_BTN_EMERGENCY;
+        valid_event = true;
     }
 
-    add_event(event_to_send);
+    if(valid_event){
+        add_event(event_to_send);
+    }
 
 }

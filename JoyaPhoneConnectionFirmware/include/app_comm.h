@@ -5,8 +5,10 @@
 #include "app_state.h"
 #include "flash_memory.h"
 
-void save_received_app_id(void);
-int check_app_id(const char *app_id);
+#define SIZE_APP_ID 5
+
+int save_received_app_id(void);
+int check_app_id(const uint8_t *app_id);
 
 /** @brief Handler for CCC (Client Characteristic Configuration) changed events
  * @param attr The GATT attribute

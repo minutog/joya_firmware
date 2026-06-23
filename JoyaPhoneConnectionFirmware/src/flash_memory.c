@@ -2,7 +2,8 @@
 
 LOG_MODULE_REGISTER(app_flash, LOG_LEVEL_INF);
 
-char joya_app_id[33] = {0}; // 32 char + null terminator
+bool app_id_loaded_from_flash = false;
+char joya_app_id[SIZE_APP_ID] = {0};
 static bool joya_is_in_emergency = false; // Variable to store the emergency state
 
 /**
@@ -19,18 +20,32 @@ static int app_settings_set(const char *name, size_t len, settings_read_cb read_
     const char *next;
     int rc;
 
-    // Evaluate if the key being loaded is "joya/app_id" (and checks that there are no subkeys after "app_id")
+    // 1. Evaluar APP_ID
     if (settings_name_steq(name, "app_id", &next) && !next) {
-        // Validate the length of the data being loaded to prevent buffer overflow
-        if (len > sizeof(joya_app_id) - 1) {
-            return -EINVAL; // El dato en flash es muy grande
+        
+        // Validamos que lo que está en Flash coincida exactamente con nuestro tamaño esperado
+        if (len != SIZE_APP_ID) {
+            LOG_ERR("Error: Tamaño en Flash (%d) no coincide con SIZE_APP_ID", len);
+            return -EINVAL; 
         }
+
+        // Leemos los bytes crudos directo a nuestro buffer
         rc = read_cb(cb_arg, joya_app_id, len);
-        joya_app_id[len] = '\0'; // Aseguramos el fin de string
-        LOG_INF("Cargado desde Flash -> app_id: %s", joya_app_id);
+        if (rc < 0) {
+            LOG_ERR("Error leyendo app_id desde Flash: %d", rc);
+            return rc;
+        }
+
+        app_id_loaded_from_flash = true;
+        // Ya no agregamos '\0' porque es un uint8_t array.
+        // Si queremos ver los datos en consola, Zephyr tiene una macro genial para bytes:
+        LOG_INF("app_id cargado desde Flash con exito.");
+        LOG_HEXDUMP_DBG(joya_app_id, SIZE_APP_ID, "Contenido de app_id:"); 
+        
         return rc;
     }
 
+    // 2. Evaluar EMERGENCY
     if (settings_name_steq(name, "emergency", &next) && !next) {
         if (len != sizeof(joya_is_in_emergency)) {
             return -EINVAL;
@@ -67,33 +82,60 @@ SETTINGS_STATIC_HANDLER_DEFINE(joya, "joya", NULL, app_settings_set, NULL, NULL)
  * @brief Initialize the storage subsystem and load settings from flash
  * This function should be called at the start of the application to ensure that any previously saved settings are loaded into RAM and ready for use.
  */
-void storage_init(void)
+int storage_init(void)
 {
     // Inicializar el subsistema
     int err = settings_subsys_init();
     if (err) {
         LOG_ERR("Error inicializando Settings (err %d)", err);
-        return;
+        return err;
     }
 
     LOG_INF("Cargando configuraciones desde Flash...");
     // Esto dispara la lectura en Flash y llama a tu función 'app_settings_set'
-    settings_load(); 
+    err = settings_load();
+    if (err) {
+        LOG_ERR("Error cargando Settings desde Flash: %d", err);
+        return err;
+    }
+    
+    if (!app_id_loaded_from_flash) {
+        LOG_INF("No app_id in flash. Using empty app_id in RAM.");
+        memset(joya_app_id, 0, SIZE_APP_ID);
+    } else {
+        LOG_INF("El ID ya existía en la Flash. Saltando escritura para proteger el silicio.");
+    }
+
+    LOG_INF("Subsistema de almacenamiento listo.");
+    return 0;
+}
+
+bool is_app_id_empty(void) {
+    static const uint8_t ceros[SIZE_APP_ID] = {0}; 
+    return (memcmp(joya_app_id, ceros, SIZE_APP_ID) == 0);
 }
 
 /**
  * @brief Save the app_id to flash
- * @param new_app_id The new app_id to save (must be a null-terminated string with a maximum length of 32 characters)
+ * @param new_app_id The new app_id to save (it assumes that the length is SIZE_APP_ID, already validated before calling this function)
  * 
  */
-void storage_save_app_id(const char* new_app_id)
-{
-    // 1. Lo guardás en tu variable de RAM
-    strncpy(joya_app_id, new_app_id, sizeof(joya_app_id) - 1);
-    
-    // 2. Lo grabás físicamente en la Flash con la clave "joya/app_id"
-    settings_save_one("joya/app_id", joya_app_id, strlen(joya_app_id));
-    LOG_INF("app_id guardado en Flash");
+int storage_save_app_id(const uint8_t* new_app_id) {
+    int ret;
+
+    memset(joya_app_id, 0, SIZE_APP_ID);
+    memcpy(joya_app_id, new_app_id, SIZE_APP_ID);
+
+    ret = settings_save_one("joya/app_id", joya_app_id, SIZE_APP_ID);
+
+    if (ret != 0) {
+        LOG_ERR("Error al guardar app_id en Flash. Codigo: %d", ret);
+        memset(joya_app_id, 0, SIZE_APP_ID);
+        return ret; // Propagamos el error de la Flash
+    }
+
+    LOG_INF("app_id guardado de forma segura en Flash");
+    return 0; // Éxito total
 }
 
 /**
@@ -102,8 +144,10 @@ void storage_save_app_id(const char* new_app_id)
  */
 void storage_save_emergency_state(bool is_active)
 {
+    int ret;
     joya_is_in_emergency = is_active;
-    settings_save_one("joya/emergency", &joya_is_in_emergency, sizeof(joya_is_in_emergency));
+    ret = settings_save_one("joya/emergency", &joya_is_in_emergency, sizeof(joya_is_in_emergency));
+    // (to do): decide what to do if settings_save_one fails (e.g., retry, log error, etc.)
     LOG_INF("Estado de emergencia guardado en Flash");
 }
 
@@ -112,8 +156,16 @@ void storage_save_emergency_state(bool is_active)
  */
 void storage_factory_reset(void)
 {
-    settings_delete("joya/app_id");
-    settings_delete("joya/emergency");
+    int ret;
+    ret = settings_delete("joya/app_id");
+    if (ret != 0) {
+        LOG_ERR("Error al borrar app_id de Flash (err %d)", ret);
+    }
+    ret = settings_delete("joya/emergency");
+    if (ret != 0) {
+        LOG_ERR("Error al borrar estado de emergencia de Flash (err %d)", ret);
+    }
+    // (to do): decide what to do if settings_delete fails (e.g., retry, log error, etc.)
     memset(joya_app_id, 0, sizeof(joya_app_id));
     joya_is_in_emergency = false;
     LOG_INF("Memoria Flash borrada (Factory Reset)");

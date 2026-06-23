@@ -3,7 +3,7 @@
 LOG_MODULE_REGISTER(app_state_mod, LOG_LEVEL_INF);
 
 /** @brief Array of retry intervals for emergency events in milliseconds */
-const uint32_t EMERGENCY_RETRY_MS[] = {1000, 2000, 5000, 10000, 30000};
+const uint32_t EMERGENCY_RETRY_MS[] = {EMERGENCY_RETRY_INITIAL_MS, EMERGENCY_RETRY_FAST_MS, EMERGENCY_RETRY_MEDIUM_MS, EMERGENCY_RETRY_SLOW_MS, EMERGENCY_RETRY_VERY_SLOW_MS};
 
 /** @brief Current index for emergency retry intervals */
 uint8_t current_retry_index = 0;
@@ -21,9 +21,9 @@ static volatile app_state_t current_state = STATE_UNPAIRED;
 K_MSGQ_DEFINE(event_queue, sizeof(event_type_t), 10, 4);
 
 /** @brief Thread for the finite state machine */
-K_THREAD_DEFINE(fsm_thread_id, 1024, fsm_thread_loop, NULL, NULL, NULL, 5, 0, 0);
+K_THREAD_DEFINE(fsm_thread_id, 4098, fsm_thread_loop, NULL, NULL, NULL, 5, 0, 0);
 
-extern char joya_app_id[33];
+extern uint8_t joya_app_id[SIZE_APP_ID];
 
 /**
  * PRIVATE FUNCTIONS
@@ -101,13 +101,14 @@ void scheduler_retry(void){
 
 void process_event(event_type_t event) {
     // Global filter for emergency events
-    if(is_in_emergency() && event == EV_BLE_CONNECTED){
+    if(is_in_emergency() && event == EV_BLE_AUTH_AND_NOTIFY){
         ble_send_event_secure(COMMAND_EMERGENCY);
         reset_emergency_retry_index();
         k_work_reschedule(&emergency_retry_work, K_MSEC(EMERGENCY_RETRY_MS[current_retry_index]));
         LOG_INF("FROM: %d TO: STATE_EMERGENCY\n", current_state);
         current_state = STATE_EMERGENCY;
         return;
+
     } else if(event == EV_BTN_EMERGENCY){ 
         storage_save_emergency_state(true);
         if(current_state == STATE_CONNECTED){
@@ -116,10 +117,16 @@ void process_event(event_type_t event) {
             reset_emergency_retry_index();
             k_work_reschedule(&emergency_retry_work, K_MSEC(EMERGENCY_RETRY_MS[current_retry_index]));
             LOG_INF("FROM: %d TO: STATE_EMERGENCY\n", current_state);
+
         } else if(current_state == STATE_EMERGENCY){
             // (to do) haptic feedback to user?
             reset_emergency_retry_index();
-        } else {
+            
+        } else if (current_state == STATE_UNPAIRED || current_state == STATE_SETUP_MODE || current_state == STATE_SETUP_WAITING_IDENTIFIER || current_state == STATE_SETUP_WAITING_NEW_IDENTIFIER){
+            LOG_INF("REMAINS IN THE SAME STATE BUT SAVES EMERGENCY STATE TO SEND AS SOON AS CONNECTED\n");
+            return;
+        }
+        else {
             // (to do) maybe reforce advertisement procedure to reconnect to the phone faster
             LOG_INF("TO: STATE_EMERGENCY - WAITING TO CONNECT FOR SENDING ALERT\n");
         }
@@ -137,7 +144,7 @@ void process_event(event_type_t event) {
 
     switch (current_state) {
         case STATE_EMERGENCY:
-            if(event == EV_BLE_CONNECTED){
+            if(event == EV_BLE_AUTH_AND_NOTIFY){
                 // (to do) send emergency command to phone and haptic feedback to user
                 // it does not change the state
                 ble_send_event_secure(COMMAND_EMERGENCY);
@@ -161,6 +168,7 @@ void process_event(event_type_t event) {
             } else if(event == EV_BLE_DISCONNECTED){
                 // (to do) maybe reforce advertisement procedure to reconnect to the phone faster
                 k_work_cancel_delayable(&emergency_retry_work);
+                set_authenticated(false);
                 LOG_INF("FROM STATE_EMERGENCY - PHONE DISCONNECTED - STARTING ADVERTISING\n");
                 ble_start_reconnect_advertising();
             }
@@ -168,6 +176,7 @@ void process_event(event_type_t event) {
 
         case STATE_UNPAIRED:
             if (event == EV_BTN_2_PULSE) {
+                set_authenticated(false);
                 current_state = STATE_SETUP_MODE;
                 LOG_INF("FROM: STATE_UNPAIRED TO: STATE_SETUP_MODE\n");
                 ble_start_setup_advertising();
@@ -177,33 +186,59 @@ void process_event(event_type_t event) {
 
         case STATE_SETUP_MODE:
             if (event == EV_BLE_CONNECTED) {
-                if(joya_app_id[0] == '\0'){
-                    current_state = STATE_SETUP_WAITING_NEW_IDENTIFIER;
-                    // k_work_reschedule(&authentification_timeout_work, K_MSEC(BLE_SETUP_WAITING_IDENTIFIER_TIMEOUT_MS));
-                    LOG_INF("FROM: STATE_SETUP_MODE TO: STATE_SETUP_WAITING_NEW_IDENTIFIER\n");
-                } else {
-                    current_state = STATE_SETUP_WAITING_IDENTIFIER;
-                    //k_work_reschedule(&authentification_timeout_work, K_MSEC(BLE_SETUP_WAITING_IDENTIFIER_TIMEOUT_MS));
-                    LOG_INF("FROM: STATE_SETUP_MODE TO: STATE_SETUP_WAITING_IDENTIFIER\n");
-                }
+                current_state = STATE_WAITING_NOTIFICATION_ENABLE;
+                LOG_INF("FROM: STATE_SETUP_MODE TO: STATE_WAITING_NOTIFICATION_ENABLE\n");
+                ble_stop_advertising();
             } else if (event == EV_BLE_TIMEOUT) {
                 current_state = STATE_UNPAIRED;
                 LOG_INF("FROM: STATE_SETUP_MODE TO: STATE_UNPAIRED (timeout)\n");
+                ble_stop_advertising();
             }
+            k_work_cancel_delayable(&connection_timeout_work);
+            break;
 
-            ble_stop_advertising();
+        case STATE_WAITING_NOTIFICATION_ENABLE:
+            if (event == EV_BLE_NOTIFY_ENABLED) {
+                if(is_app_id_empty()){
+                    current_state = STATE_SETUP_WAITING_NEW_IDENTIFIER;
+                    LOG_INF("FROM: WAITING NOTIFICATION ENABLE TO: STATE_SETUP_WAITING_NEW_IDENTIFIER\n");
+                } else {
+                    current_state = STATE_SETUP_WAITING_IDENTIFIER;
+                    LOG_INF("FROM: WAITING NOTIFICATION ENABLE TO: STATE_SETUP_WAITING_IDENTIFIER\n");
+                }
+            } else if (event == EV_BLE_DISCONNECTED) {
+                if(is_app_id_empty()){
+                    current_state = STATE_UNPAIRED;
+                    LOG_INF("FROM: WAITING NOTIFICATION ENABLE TO: STATE_UNPAIRED (disconnected)\n");
+                } else {
+                    current_state = STATE_BONDED_DISCONNECTED;
+                    ble_start_reconnect_advertising();
+                    LOG_INF("FROM: WAITING NOTIFICATION ENABLE TO: STATE_BONDED_DISCONNECTED (reconnecting..)\n");
+                }
+            }
             break;
 
         case STATE_SETUP_WAITING_NEW_IDENTIFIER:
             if(event == EV_APP_IDENTIFIER_RECEIVED){
                 // Es el nuevo identificador
                 // k_work_cancel_delayable(&authentification_timeout_work);
-                save_received_app_id();
-                current_state = STATE_CONNECTED;
-                LOG_INF("APP_ID SAVED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_CONNECTED\n");
-            } else if(event == EV_BLE_TIMEOUT || event == EV_BLE_DISCONNECTED || event == EV_BTN_FACTORY_RESET){
+                if(save_received_app_id() == 0){
+                    current_state = STATE_CONNECTED;
+                    k_work_cancel_delayable(&connection_timeout_work);
+                    ble_send_event_secure(COMMAND_ACK_AUTH);
+                    LOG_INF("APP_ID SAVED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_CONNECTED\n");
+                    add_event(EV_BLE_AUTH_AND_NOTIFY);
+                    return;
+                } else {
+                    ble_send_event_secure(COMMAND_NACK_AUTH);
+                    LOG_INF("APP_ID NOT SAVED. WAITING FOR NEW IDENTIFIER\n");
+                }
+            } else if(event == EV_BLE_DISCONNECTED){
                 current_state = STATE_UNPAIRED;
-                LOG_INF("TIMEOUT WITHOUT CLAIMED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_UNPAIRED\n");
+                ble_force_reset();
+                storage_factory_reset();
+                current_state = STATE_UNPAIRED;
+                LOG_INF("TIMEOUT/DISCONNECTION/RESET WITHOUT CLAIMED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_UNPAIRED\n");
             }
             break;
 
@@ -213,22 +248,23 @@ void process_event(event_type_t event) {
                 // Es el nuevo identificador
                 if(check_app_id(joya_app_id) == 0){
                     current_state = STATE_CONNECTED;
+                    k_work_cancel_delayable(&connection_timeout_work);
                     LOG_INF("APP_ID CHECKED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_CONNECTED\n");
                     ble_send_event_secure(COMMAND_ACK_AUTH);
+                    add_event(EV_BLE_AUTH_AND_NOTIFY);
+                    return;
                 } else {
-                    current_state = STATE_BONDED_DISCONNECTED;
+                    // current_state = STATE_BONDED_DISCONNECTED;
                     // (to do) max retry attempts? or just wait for the next connection?
-                    LOG_INF("WRONG APP_ID. DISCONNECTING...\n");
+                    LOG_INF("WRONG APP_ID. TRY AGAIN\n");
                     ble_send_event_secure(COMMAND_NACK_AUTH);
+                    return;
                 }
+            } else if (event == EV_BLE_DISCONNECTED){
+                current_state = STATE_BONDED_DISCONNECTED;
+                ble_start_reconnect_advertising();
+                LOG_INF("FROM: STATE_SETUP_WAITING_IDENTIFIER TO: STATE_BONDED_DISCONNECTED (reconnecting...)\n");
             }
-                /*
-            } else if(event == EV_BLE_TIMEOUT || event == EV_BLE_DISCONNECTED){
-                ble_send_event_secure(COMMAND_NACK_AUTH);
-                // k_work_cancel_delayable(&authentification_timeout_work);
-                current_state = STATE_NOT_AUTHORIZED;
-                LOG_INF("TIMEOUT WITHOUT CLAIMED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_NOT_AUTHORIZED\n");
-            }*/
             break;
 
         case STATE_CONNECTED:
@@ -250,8 +286,8 @@ void process_event(event_type_t event) {
         case STATE_BONDED_DISCONNECTED:
             // (to do): lunch advertisement procedure to reconnect to the phone
             if (event == EV_BLE_CONNECTED) {
-                LOG_INF("FROM: STATE_BONDED_DISCONNECTED TO: STATE_SETUP_WAITING_IDENTIFIER\n");
-                current_state = STATE_SETUP_WAITING_IDENTIFIER;
+                LOG_INF("FROM: STATE_BONDED_DISCONNECTED TO: STATE_WAITING_NOTIFICATION_ENABLE\n");
+                current_state = STATE_WAITING_NOTIFICATION_ENABLE;
             } 
             break;
 
@@ -260,11 +296,11 @@ void process_event(event_type_t event) {
             break;
     }
 
-    // (to do): review EMERGENCY in context of UNPAIRED
     if(event == EV_BTN_FACTORY_RESET /*&& current_state != STATE_EMERGENCY*/){
         if(!is_in_emergency()){
             LOG_INF("FROM: %d TO: STATE_UNPAIRED\n", current_state);
             current_state = STATE_UNPAIRED;
+            set_authenticated(false);
             ble_force_reset();
             storage_factory_reset();
         } else {

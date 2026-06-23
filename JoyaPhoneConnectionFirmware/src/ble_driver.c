@@ -12,6 +12,7 @@ static struct bt_uuid_128 joya_rx_auth_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_RX_
 /** @brief Current connection */
 static struct bt_conn *current_conn = NULL;
 static bool notify_enabled = false;
+static bool authenticated = false;
 
 /**
  * CALLBACKS
@@ -162,7 +163,7 @@ int ble_driver_init(void) {
     return 0;
 }
 
-
+/*
 int ble_start_setup_advertising(void) {
     // Change the device name to "Joya Setup" for advertising
     int name_err = bt_set_name("Joya Setup");
@@ -178,14 +179,46 @@ int ble_start_setup_advertising(void) {
 
     LOG_INF("Setup advertising started successfully");
     return 0;
+}*/
+
+int ble_start_setup_advertising(void) {
+    int name_err = bt_set_name("Joya Setup");
+    if (name_err) {
+        LOG_WRN("Could not set dynamic name: %d", name_err);
+    }
+
+    bt_le_adv_stop();
+
+    int err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
+    if (err) {
+        LOG_ERR("Failed to start setup advertising. Error: %d", err);
+        return err;
+    }
+
+    LOG_INF("Setup advertising started successfully");
+    return 0;
 }
 
-
+/*
 int ble_start_reconnect_advertising(void) {
     bt_set_name("Joya");
     int err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
     LOG_INF("Setup advertising started successfully");
     return err;
+}*/
+int ble_start_reconnect_advertising(void) {
+    bt_set_name("Joya");
+
+    bt_le_adv_stop();
+
+    int err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
+    if (err) {
+        LOG_ERR("Failed to start reconnect advertising. Error: %d", err);
+        return err;
+    }
+
+    LOG_INF("Reconnect advertising started successfully");
+    return 0;
 }
 
 
@@ -224,4 +257,16 @@ void ble_force_reset(void) {
     // Stop any advertising that might be running
     bt_le_adv_stop();
     LOG_INF("Radio silenced.");
+}
+
+void set_authenticated(bool auth) {
+    authenticated = auth;
+}
+
+bool is_authenticated(void) {
+    return authenticated;
+}
+
+bool is_notify_enabled(void) {
+    return notify_enabled;
 }
