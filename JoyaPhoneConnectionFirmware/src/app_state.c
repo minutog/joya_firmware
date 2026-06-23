@@ -45,15 +45,44 @@ void reset_emergency_retry_index(void) {
  * WORK HANDLERS
  */
 
+static void emergency_schedule_next_retry(void)
+{
+    uint8_t idx = current_retry_index;
+
+    k_work_reschedule(&emergency_retry_work,
+                      K_MSEC(EMERGENCY_RETRY_MS[idx]));
+
+    increment_emergency_retry_index();
+}
+
+static void emergency_restart_alerts(void)
+{
+    k_work_cancel_delayable(&emergency_retry_work);
+    reset_emergency_retry_index();
+
+    ble_send_event_secure(COMMAND_EMERGENCY);
+
+    emergency_schedule_next_retry();
+}
+
+static void emergency_retry_work_handler(struct k_work *work)
+{
+    ble_send_event_secure(COMMAND_EMERGENCY);
+    emergency_schedule_next_retry();
+}
+
+
 /** @brief Work handler for emergency retry 
  * This function is called when the emergency retry work is executed. It sends the emergency command to the phone and reschedules itself based on the current retry interval.
  * 
 */
+/*
 static void emergency_retry_work_handler(struct k_work *work) {
     ble_send_event_secure(COMMAND_EMERGENCY);
     k_work_reschedule(&emergency_retry_work, K_MSEC(EMERGENCY_RETRY_MS[current_retry_index]));
     increment_emergency_retry_index();
 }
+*/
 
 /** @brief Work handler for connection timeout 
  * This function is called when the connection timeout work is executed. It adds a timeout event to the event queue.
@@ -112,7 +141,7 @@ void process_event(event_type_t event) {
     } else if(event == EV_BTN_EMERGENCY){ 
         storage_save_emergency_state(true);
         if(current_state == STATE_CONNECTED){
-            // (to do) send emergency command to phone and haptic feedback to user (reset timer)
+            // haptic feedback to user
             ble_send_event_secure(COMMAND_EMERGENCY);
             reset_emergency_retry_index();
             k_work_reschedule(&emergency_retry_work, K_MSEC(EMERGENCY_RETRY_MS[current_retry_index]));
@@ -121,6 +150,7 @@ void process_event(event_type_t event) {
         } else if(current_state == STATE_EMERGENCY){
             // (to do) haptic feedback to user?
             reset_emergency_retry_index();
+            emergency_restart_alerts();
             
         } else if (current_state == STATE_UNPAIRED || current_state == STATE_SETUP_MODE || current_state == STATE_SETUP_WAITING_IDENTIFIER || current_state == STATE_SETUP_WAITING_NEW_IDENTIFIER){
             LOG_INF("REMAINS IN THE SAME STATE BUT SAVES EMERGENCY STATE TO SEND AS SOON AS CONNECTED\n");
@@ -145,7 +175,7 @@ void process_event(event_type_t event) {
     switch (current_state) {
         case STATE_EMERGENCY:
             if(event == EV_BLE_AUTH_AND_NOTIFY){
-                // (to do) send emergency command to phone and haptic feedback to user
+                // (to do) haptic feedback to user
                 // it does not change the state
                 ble_send_event_secure(COMMAND_EMERGENCY);
                 LOG_INF("FROM: STATE_EMERGENCY TO: STATE_EMERGENCY\n");
@@ -155,7 +185,7 @@ void process_event(event_type_t event) {
                 // (to do) haptic
             }
             else if (event == EV_APP_CMD_STOP_EMERGENCY) {
-                // (to do) acknowledge stop emergency command to phone and haptic feedback to user?
+                // (to do) haptic feedback to user?
                 // just in case its stops before ack
                 k_work_cancel_delayable(&emergency_retry_work);
                 storage_save_emergency_state(false);
@@ -167,16 +197,16 @@ void process_event(event_type_t event) {
                 LOG_INF("FROM: STATE_EMERGENCY TO: STATE_EMERGENCY (acknowledged)\n");
             } else if(event == EV_BLE_DISCONNECTED){
                 // (to do) maybe reforce advertisement procedure to reconnect to the phone faster
+
                 k_work_cancel_delayable(&emergency_retry_work);
-                set_authenticated(false);
-                LOG_INF("FROM STATE_EMERGENCY - PHONE DISCONNECTED - STARTING ADVERTISING\n");
                 ble_start_reconnect_advertising();
+                current_state = STATE_BONDED_DISCONNECTED;
+                LOG_INF("FROM STATE_EMERGENCY - PHONE DISCONNECTED - STARTING ADVERTISING\n");
             }
             break;
 
         case STATE_UNPAIRED:
             if (event == EV_BTN_2_PULSE) {
-                set_authenticated(false);
                 current_state = STATE_SETUP_MODE;
                 LOG_INF("FROM: STATE_UNPAIRED TO: STATE_SETUP_MODE\n");
                 ble_start_setup_advertising();
@@ -192,6 +222,10 @@ void process_event(event_type_t event) {
             } else if (event == EV_BLE_TIMEOUT) {
                 current_state = STATE_UNPAIRED;
                 LOG_INF("FROM: STATE_SETUP_MODE TO: STATE_UNPAIRED (timeout)\n");
+                ble_stop_advertising();
+            } else if (event == EV_BLE_DISCONNECTED) {
+                current_state = STATE_UNPAIRED;
+                LOG_INF("FROM: STATE_SETUP_MODE TO: STATE_UNPAIRED (disconnected)\n");
                 ble_stop_advertising();
             }
             k_work_cancel_delayable(&connection_timeout_work);
@@ -220,7 +254,6 @@ void process_event(event_type_t event) {
 
         case STATE_SETUP_WAITING_NEW_IDENTIFIER:
             if(event == EV_APP_IDENTIFIER_RECEIVED){
-                // Es el nuevo identificador
                 // k_work_cancel_delayable(&authentification_timeout_work);
                 if(save_received_app_id() == 0){
                     current_state = STATE_CONNECTED;
@@ -236,7 +269,7 @@ void process_event(event_type_t event) {
             } else if(event == EV_BLE_DISCONNECTED){
                 current_state = STATE_UNPAIRED;
                 ble_force_reset();
-                storage_factory_reset();
+                //storage_factory_reset();
                 current_state = STATE_UNPAIRED;
                 LOG_INF("TIMEOUT/DISCONNECTION/RESET WITHOUT CLAIMED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_UNPAIRED\n");
             }
@@ -245,7 +278,6 @@ void process_event(event_type_t event) {
         case STATE_SETUP_WAITING_IDENTIFIER:
             if(event == EV_APP_IDENTIFIER_RECEIVED){
                 k_work_cancel_delayable(&authentification_timeout_work);
-                // Es el nuevo identificador
                 if(check_app_id(joya_app_id) == 0){
                     current_state = STATE_CONNECTED;
                     k_work_cancel_delayable(&connection_timeout_work);
@@ -273,7 +305,7 @@ void process_event(event_type_t event) {
                 ble_start_reconnect_advertising();
                 LOG_INF("FROM: STATE_CONNECTED TO: STATE_BONDED_DISCONNECTED\n");
             } else if (event == EV_BTN_1_PULSE) {
-                // (to do): send routine command to phone
+                // (to do): haptic
                 ble_send_event_secure(COMMAND_ROUTINE);
                 LOG_INF("FROM: STATE_CONNECTED TO: STATE_CONNECTED (routine command sent)\n");
             } else if (event == EV_BTN_LONG_PRESS) {
@@ -284,7 +316,6 @@ void process_event(event_type_t event) {
             break;
 
         case STATE_BONDED_DISCONNECTED:
-            // (to do): lunch advertisement procedure to reconnect to the phone
             if (event == EV_BLE_CONNECTED) {
                 LOG_INF("FROM: STATE_BONDED_DISCONNECTED TO: STATE_WAITING_NOTIFICATION_ENABLE\n");
                 current_state = STATE_WAITING_NOTIFICATION_ENABLE;
@@ -300,7 +331,6 @@ void process_event(event_type_t event) {
         if(!is_in_emergency()){
             LOG_INF("FROM: %d TO: STATE_UNPAIRED\n", current_state);
             current_state = STATE_UNPAIRED;
-            set_authenticated(false);
             ble_force_reset();
             storage_factory_reset();
         } else {
