@@ -105,6 +105,50 @@ enum JoyaActivityState: Equatable {
     }
 }
 
+// Firmware v2 uses compact binary commands over the custom Joya GATT service.
+private enum JoyaIncomingCommand: UInt8 {
+    case startRoutine = 0x02
+    case endRoutine = 0x03
+    case emergency = 0x04
+    case ack = 0x05
+    case nack = 0x06
+
+    var logName: String {
+        switch self {
+        case .startRoutine:
+            return "START_ROUTINE"
+        case .endRoutine:
+            return "END_ROUTINE"
+        case .emergency:
+            return "EMERGENCY"
+        case .ack:
+            return "ACK"
+        case .nack:
+            return "NACK"
+        }
+    }
+}
+
+private enum JoyaOutgoingCommand: UInt8 {
+    case ackEmergency = 0x41
+    case stopEmergency = 0x42
+    case followMe = 0x43
+    case friendEmergency = 0x44
+
+    var logName: String {
+        switch self {
+        case .ackEmergency:
+            return "ACK_EMERGENCY"
+        case .stopEmergency:
+            return "STOP_EMERGENCY"
+        case .followMe:
+            return "FOLLOW_ME"
+        case .friendEmergency:
+            return "FRIEND_EMERGENCY"
+        }
+    }
+}
+
 @MainActor
 final class JoyaBluetoothManager: NSObject, ObservableObject {
     @Published private(set) var connectionState: JoyaConnectionState = .idle
@@ -112,34 +156,48 @@ final class JoyaBluetoothManager: NSObject, ObservableObject {
     @Published private(set) var logs: [LogEntry] = []
     @Published private(set) var lastMessage = "Sin mensajes todavia"
 
-    private let nusServiceUUID = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
-    private let nusRXUUID = CBUUID(string: "6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
-    private let nusTXUUID = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
+    // Firmware v2 exposes a custom service instead of the Nordic UART Service.
+    private let joyaServiceUUID = CBUUID(string: "A407E00A-00C1-464D-9173-2CB8BE585343")
+    private let joyaTXUUID = CBUUID(string: "A407E00A-00C1-464D-9173-2CB8BE585344")
+    private let joyaRXUUID = CBUUID(string: "A407E00A-00C1-464D-9173-2CB8BE585345")
+    private let joyaRXAuthUUID = CBUUID(string: "A407E00A-00C1-464D-9173-2CB8BE585346")
     private let savedPeripheralKey = "joya.savedPeripheralID"
-    private let appIDKey = "joya.appID"
+    private let legacyAppIDKey = "joya.appID"
+    private let authAppIDKey = "joya.authAppID.v2"
+    // Keep this aligned with firmware SIZE_APP_ID. The current debug firmware expects 5 bytes.
+    private let authAppIDSize = 5
     private let connectionTimeoutSeconds: TimeInterval = 8
 
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var rxCharacteristic: CBCharacteristic?
     private var txCharacteristic: CBCharacteristic?
+    private var rxAuthCharacteristic: CBCharacteristic?
     private var connectionTimeoutWorkItem: DispatchWorkItem?
     private var activeConnectionAttemptID: UUID?
     private var shouldAutoReconnect = true
     private var hasTriedRestore = false
 
-    // CoreBluetooth can surface the same ready state through multiple callbacks.
-    // Keep the setup handshake idempotent so Joya does not receive duplicate CLAIMs.
-    private var didSendPing = false
-    private var didSendClaim = false
+    // CoreBluetooth can surface the same ready state through multiple callbacks,
+    // so keep the authentication write idempotent per connection.
+    private var didSendAuthAppID = false
+    private var didCompleteAuthentication = false
 
-    private var appID: String {
-        if let existing = UserDefaults.standard.string(forKey: appIDKey) {
+    private var authAppID: Data {
+        if let existing = UserDefaults.standard.data(forKey: authAppIDKey),
+           existing.count == authAppIDSize {
             return existing
         }
 
-        let generated = UUID().uuidString
-        UserDefaults.standard.set(generated, forKey: appIDKey)
+        let source = UserDefaults.standard.string(forKey: legacyAppIDKey) ?? UUID().uuidString
+        var bytes = Array(source.replacingOccurrences(of: "-", with: "").utf8.prefix(authAppIDSize))
+
+        while bytes.count < authAppIDSize {
+            bytes.append(0x30)
+        }
+
+        let generated = Data(bytes)
+        UserDefaults.standard.set(generated, forKey: authAppIDKey)
         return generated
     }
 
@@ -207,25 +265,25 @@ final class JoyaBluetoothManager: NSObject, ObservableObject {
     }
 
     func cancelRoutine() {
+        // Routine end is now reported by firmware; this only clears app-side state.
         activityState = .none
         addLog("Usuario cancelo rutina desde la app")
-        send("CANCEL_ROUTINE")
     }
 
     func cancelEmergency() {
         activityState = .none
         addLog("Usuario cancelo emergencia desde la app")
-        send("EMERGENCY_OFF")
+        send(.stopEmergency)
     }
 
     func sendFriendComingForYou() {
         addLog("Usuario aviso que un amigo va en camino")
-        send("FRIEND_COMING")
+        send(.followMe)
     }
 
-    func testHaptic() {
-        addLog("Usuario pidio test de haptic")
-        send("HAPTIC_TEST")
+    func sendFriendEmergency() {
+        addLog("Usuario aviso emergencia de un amigo")
+        send(.friendEmergency)
     }
 
     func clearLogs() {
@@ -244,14 +302,15 @@ final class JoyaBluetoothManager: NSObject, ObservableObject {
         central?.stopScan()
         rxCharacteristic = nil
         txCharacteristic = nil
-        didSendPing = false
-        didSendClaim = false
+        rxAuthCharacteristic = nil
+        didSendAuthAppID = false
+        didCompleteAuthentication = false
         setConnectionState(.scanning, reason: reason)
         central?.scanForPeripherals(
-            withServices: [nusServiceUUID],
+            withServices: [joyaServiceUUID],
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
-        addLog("Scan iniciado por servicio NUS \(nusServiceUUID.uuidString); isScanning=\(central?.isScanning == true)")
+        addLog("Scan iniciado por servicio Joya \(joyaServiceUUID.uuidString); isScanning=\(central?.isScanning == true)")
     }
 
     private func restoreSavedPeripheralIfNeeded() {
@@ -326,90 +385,108 @@ final class JoyaBluetoothManager: NSObject, ObservableObject {
         startScanning(reason: "timeout conectando a \(shortID(peripheralID))")
     }
 
-    private func send(_ text: String) {
-        guard let peripheral, let rxCharacteristic else {
-            addLog("No se pudo enviar: canal BLE no listo (\(text))")
+    private func send(_ command: JoyaOutgoingCommand) {
+        guard let rxCharacteristic else {
+            addLog("No se pudo enviar: canal RX no listo (\(command.logName))")
             return
         }
 
-        guard let data = text.data(using: .utf8) else {
-            addLog("No se pudo codificar mensaje: \(text)")
+        write(Data([command.rawValue]), to: rxCharacteristic, label: "\(command.logName) \(hexByte(command.rawValue))")
+    }
+
+    private func sendAuthAppIDIfNeeded() {
+        guard !didSendAuthAppID else {
+            addLog("APP_ID omitido: ya se envio uno en esta conexion")
             return
         }
 
-        let writeType: CBCharacteristicWriteType = rxCharacteristic.properties.contains(.writeWithoutResponse)
+        guard let rxAuthCharacteristic else {
+            addLog("No se pudo autenticar: canal RX AUTH no listo")
+            return
+        }
+
+        let appID = authAppID
+        didSendAuthAppID = true
+        write(appID, to: rxAuthCharacteristic, label: "APP_ID bytes=\(hexString(appID))")
+    }
+
+    private func write(_ data: Data, to characteristic: CBCharacteristic, label: String) {
+        guard let peripheral else {
+            addLog("No se pudo enviar: peripheral BLE no listo (\(label))")
+            return
+        }
+
+        let writeType: CBCharacteristicWriteType = characteristic.properties.contains(.writeWithoutResponse)
             ? .withoutResponse
             : .withResponse
-        peripheral.writeValue(data, for: rxCharacteristic, type: writeType)
-        addLog("App -> Joya: \(text) type=\(writeType.logName) peripheral=\(peripheral.state.logName) rx=\(rxCharacteristic.properties.logName)")
+        peripheral.writeValue(data, for: characteristic, type: writeType)
+        addLog("App -> Joya: \(label) type=\(writeType.logName) peripheral=\(peripheral.state.logName) characteristic=\(characteristic.uuid.uuidString)[\(characteristic.properties.logName)]")
     }
 
-    private func handleIncoming(_ text: String) {
-        lastMessage = text
-        addLog("Joya -> App: \(text)")
-
-        if text.hasPrefix("HELLO:") {
-            sendPingIfNeeded()
-        } else if text == "PONG:claimed=0" {
-            sendClaimIfNeeded()
-        } else if text == "PONG:claimed=1" {
-            setConnectionState(.connected, reason: "PONG claimed=1 recibido")
-        } else if text.hasPrefix("CLAIM_OK") {
-            setConnectionState(.connected, reason: "CLAIM_OK recibido")
-            addLog("Claim completado")
-        } else if text == "EVENT:ROUTINE_START" || text == "EVENT:BUTTON_PRESS" || text == "EVENT:SINGLE_CLICK" {
-            activityState = .routine
-            addLog("Boton Joya: rutina iniciada")
-        } else if text == "EVENT:ROUTINE_CANCEL" || text == "EVENT:HOLD" || text == "EVENT:LONG_PRESS" {
-            activityState = .none
-            addLog("Boton Joya: rutina cancelada")
-        } else if isEmergencyOnEvent(text) {
-            handleEmergencyOnFromJoya()
-        } else if text == "EVENT:EMERGENCY_CANCEL" {
-            activityState = .none
-            addLog("Boton Joya: emergencia cancelada")
-        } else if text == "EVENT:PHONE_PAIRING_RESET" {
-            UserDefaults.standard.removeObject(forKey: savedPeripheralKey)
-            activityState = .none
-            addLog("Joya borro el pairing guardado")
-        } else if text.hasPrefix("ACK:") {
-            addLog("Confirmacion recibida: \(text)")
-        } else if text.hasPrefix("ERR:") {
-            if text == "ERR:ALREADY_CLAIMED", didSendClaim {
-                setConnectionState(.connected, reason: "ERR:ALREADY_CLAIMED despues de CLAIM")
-                addLog("Joya ya estaba claimed; seguimos conectado")
-            } else {
-                setConnectionState(.failed(text), reason: "error recibido desde Joya")
-            }
-        }
-    }
-
-    private func sendPingIfNeeded() {
-        guard !didSendPing else { return }
-        didSendPing = true
-        send("PING")
-    }
-
-    private func sendClaimIfNeeded() {
-        guard !didSendClaim else {
-            addLog("CLAIM omitido: ya se envio uno en esta conexion")
+    private func handleIncoming(_ data: Data) {
+        guard !data.isEmpty else {
+            addLog("Mensaje BLE recibido vacio")
             return
         }
 
-        didSendClaim = true
-        send("CLAIM:\(appID)")
+        let bytes = Array(data)
+        let message = bytes.map(commandDescription(for:)).joined(separator: ", ")
+        lastMessage = message
+        addLog("Joya -> App: \(message)")
+
+        for byte in bytes {
+            handleIncoming(byte)
+        }
     }
 
-    private func isEmergencyOnEvent(_ text: String) -> Bool {
-        text == "EVENT:EMERGENCY_ON"
-            || text == "EVENT:EMERGENCY_START"
-            || text == "EVENT:TRIPLE_CLICK"
+    private func handleIncoming(_ byte: UInt8) {
+        guard let command = JoyaIncomingCommand(rawValue: byte) else {
+            addLog("Comando Joya desconocido: \(hexByte(byte))")
+            return
+        }
+
+        switch command {
+        case .startRoutine:
+            activityState = .routine
+            addLog("Boton Joya: rutina iniciada")
+        case .endRoutine:
+            activityState = .none
+            addLog("Boton Joya: rutina finalizada")
+        case .emergency:
+            handleEmergencyOnFromJoya()
+        case .ack:
+            handleAckFromJoya()
+        case .nack:
+            handleNackFromJoya()
+        }
+    }
+
+    private func handleAckFromJoya() {
+        if !didSendAuthAppID {
+            addLog("ACK de autenticacion recibido; enviando APP_ID")
+            sendAuthAppIDIfNeeded()
+        } else if !didCompleteAuthentication {
+            didCompleteAuthentication = true
+            setConnectionState(.connected, reason: "ACK de APP_ID recibido")
+            addLog("Autenticacion Joya completada")
+        } else {
+            addLog("ACK recibido")
+        }
+    }
+
+    private func handleNackFromJoya() {
+        if !didCompleteAuthentication {
+            didSendAuthAppID = false
+            setConnectionState(.failed("Joya rechazo el APP_ID guardado."), reason: "NACK durante autenticacion")
+        } else {
+            addLog("NACK recibido desde Joya")
+        }
     }
 
     private func handleEmergencyOnFromJoya() {
         let wasEmergencyActive = activityState == .emergency
         activityState = .emergency
-        send("ACK:EMERGENCY_ON")
+        send(.ackEmergency)
 
         if wasEmergencyActive {
             addLog("Boton Joya: emergencia ya estaba activa; ACK reenviado")
@@ -477,6 +554,22 @@ final class JoyaBluetoothManager: NSObject, ObservableObject {
     private func shortID(_ id: UUID?) -> String {
         guard let id else { return "nil" }
         return String(id.uuidString.prefix(8))
+    }
+
+    private func commandDescription(for byte: UInt8) -> String {
+        if let command = JoyaIncomingCommand(rawValue: byte) {
+            return "\(command.logName) \(hexByte(byte))"
+        }
+
+        return "UNKNOWN \(hexByte(byte))"
+    }
+
+    private func hexByte(_ byte: UInt8) -> String {
+        String(format: "0x%02X", byte)
+    }
+
+    private func hexString(_ data: Data) -> String {
+        data.map { String(format: "%02X", $0) }.joined(separator: " ")
     }
 }
 
@@ -590,7 +683,7 @@ extension JoyaBluetoothManager: CBCentralManagerDelegate {
         savePeripheralID(peripheral)
         setConnectionState(.discovering, reason: "didConnect \(shortID(peripheral.identifier))")
         addLog("Conexion BLE establecida: \(describe(peripheral))")
-        peripheral.discoverServices([nusServiceUUID])
+        peripheral.discoverServices([joyaServiceUUID])
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
@@ -607,8 +700,9 @@ extension JoyaBluetoothManager: CBCentralManagerDelegate {
         cancelConnectionTimeout(reason: "didDisconnect \(shortID(peripheral.identifier))")
         rxCharacteristic = nil
         txCharacteristic = nil
-        didSendPing = false
-        didSendClaim = false
+        rxAuthCharacteristic = nil
+        didSendAuthAppID = false
+        didCompleteAuthentication = false
         activityState = .none
         setConnectionState(.disconnected, reason: "didDisconnect")
         addLog("Desconectado: \(describe(peripheral)); error=\(error?.localizedDescription ?? "sin error")")
@@ -633,9 +727,9 @@ extension JoyaBluetoothManager: CBPeripheralDelegate {
         }
 
         addLog("Servicios descubiertos: \(services.map { $0.uuid.uuidString }.joined(separator: ","))")
-        for service in services where service.uuid == nusServiceUUID {
-            addLog("Servicio NUS encontrado")
-            peripheral.discoverCharacteristics([nusRXUUID, nusTXUUID], for: service)
+        for service in services where service.uuid == joyaServiceUUID {
+            addLog("Servicio Joya encontrado")
+            peripheral.discoverCharacteristics([joyaRXUUID, joyaTXUUID, joyaRXAuthUUID], for: service)
         }
     }
 
@@ -654,19 +748,21 @@ extension JoyaBluetoothManager: CBPeripheralDelegate {
         addLog("Caracteristicas descubiertas para \(service.uuid.uuidString): \(characteristics.map { "\($0.uuid.uuidString)[\($0.properties.logName)]" }.joined(separator: ","))")
 
         for characteristic in characteristics {
-            if characteristic.uuid == nusRXUUID {
+            if characteristic.uuid == joyaRXUUID {
                 rxCharacteristic = characteristic
                 addLog("Canal RX listo")
-            } else if characteristic.uuid == nusTXUUID {
+            } else if characteristic.uuid == joyaTXUUID {
                 txCharacteristic = characteristic
                 peripheral.setNotifyValue(true, for: characteristic)
                 addLog("Canal TX listo, activando notificaciones")
+            } else if characteristic.uuid == joyaRXAuthUUID {
+                rxAuthCharacteristic = characteristic
+                addLog("Canal RX AUTH listo")
             }
         }
 
-        if rxCharacteristic != nil && txCharacteristic != nil {
-            setConnectionState(.connected, reason: "RX y TX listos")
-            sendPingIfNeeded()
+        if rxCharacteristic != nil && txCharacteristic != nil && rxAuthCharacteristic != nil {
+            addLog("Canales BLE listos; esperando ACK de autenticacion")
         }
     }
 
@@ -680,18 +776,20 @@ extension JoyaBluetoothManager: CBPeripheralDelegate {
             return
         }
 
-        if characteristic.uuid == nusTXUUID {
-            addLog(characteristic.isNotifying ? "Notificaciones activas" : "Notificaciones apagadas")
+        if characteristic.uuid == joyaTXUUID {
+            addLog(characteristic.isNotifying ? "Notificaciones activas; esperando ACK de Joya" : "Notificaciones apagadas")
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard characteristic.uuid == nusRXUUID else { return }
+        guard characteristic.uuid == joyaRXUUID || characteristic.uuid == joyaRXAuthUUID else { return }
+
+        let channelName = characteristic.uuid == joyaRXAuthUUID ? "RX AUTH" : "RX"
 
         if let error {
-            addLog("Write RX fallo: \(error.localizedDescription)")
+            addLog("Write \(channelName) fallo: \(error.localizedDescription)")
         } else {
-            addLog("Write RX OK")
+            addLog("Write \(channelName) OK")
         }
     }
 
@@ -705,13 +803,12 @@ extension JoyaBluetoothManager: CBPeripheralDelegate {
             return
         }
 
-        guard characteristic.uuid == nusTXUUID,
-              let data = characteristic.value,
-              let text = String(data: data, encoding: .utf8) else {
-            addLog("Mensaje BLE recibido sin texto valido")
+        guard characteristic.uuid == joyaTXUUID,
+              let data = characteristic.value else {
+            addLog("Mensaje BLE recibido desde una caracteristica inesperada")
             return
         }
 
-        handleIncoming(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        handleIncoming(data)
     }
 }

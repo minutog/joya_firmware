@@ -158,9 +158,9 @@ struct ContentView: View {
 
             if joya.isConnected {
                 Button {
-                    joya.testHaptic()
+                    joya.sendFriendEmergency()
                 } label: {
-                    Text("Test haptic")
+                    Text("Emergencia de amigo")
                         .font(.body.weight(.semibold))
                         .frame(maxWidth: .infinity)
                 }
