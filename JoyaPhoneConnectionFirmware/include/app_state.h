@@ -52,7 +52,8 @@ typedef enum {
     // APPLICATION EVENTS
     EV_APP_CMD_STOP_EMERGENCY,     
     EV_APP_CMD_FOLLOW_ME,
-    EV_APP_ACK_EMERGENCY
+    EV_APP_ACK_EMERGENCY,
+    EV_FRIEND_EMERGENCY
 } event_type_t;
 
 /** @brief Process an event

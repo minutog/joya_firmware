@@ -12,7 +12,7 @@ extern struct k_msgq event_queue;
 
 #define DEBOUNTE_TIME_MS 50
 #define CLICK_WINDOW_MS 1000
-#define BUTTON_ROUTINE_CANCEL_HOLD_MS 900
+#define BUTTON_ROUTINE_CANCEL_HOLD_MS 1500
 #define BUTTON_FACTORY_RESET_HOLD_MS 15000
 
 int button_init(void);

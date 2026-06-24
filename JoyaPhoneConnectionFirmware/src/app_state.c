@@ -216,10 +216,6 @@ void process_event(event_type_t event) {
 
     if (is_in_emergency()) {
         switch (event) {
-            case EV_BTN_FACTORY_RESET:
-                LOG_INF("Factory reset ignored: emergency active");
-                return;
-
             case EV_APP_ACK_EMERGENCY:
                 emergency_stop_alerts();
                 LOG_INF("Emergency acknowledged, retries stopped");
@@ -283,9 +279,11 @@ void process_event(event_type_t event) {
                 return;
 
             case EV_BTN_1_PULSE:
+            case EV_BTN_2_PULSE:
             case EV_BTN_LONG_PRESS:
             case EV_APP_CMD_FOLLOW_ME:
-            case EV_BTN_2_PULSE:
+            case EV_FRIEND_EMERGENCY:
+            case EV_BTN_FACTORY_RESET:
                 /*
                 * Normal app actions are ignored while emergency is active.
                 */
@@ -330,13 +328,8 @@ void process_event(event_type_t event) {
 
         case STATE_WAITING_NOTIFICATION_ENABLE:
             if (event == EV_BLE_NOTIFY_ENABLED) {
-                if(is_app_id_empty()){
-                    current_state = STATE_SETUP_WAITING_NEW_IDENTIFIER;
-                    LOG_INF("FROM: WAITING NOTIFICATION ENABLE TO: STATE_SETUP_WAITING_NEW_IDENTIFIER\n");
-                } else {
-                    current_state = STATE_SETUP_WAITING_IDENTIFIER;
-                    LOG_INF("FROM: WAITING NOTIFICATION ENABLE TO: STATE_SETUP_WAITING_IDENTIFIER\n");
-                }
+                current_state = STATE_SETUP_WAITING_IDENTIFIER;
+                LOG_INF("FROM: WAITING NOTIFICATION ENABLE TO: STATE_SETUP_WAITING_IDENTIFIER\n");
             } else if (event == EV_BLE_DISCONNECTED) {
                 if(is_app_id_empty()){
                     current_state = STATE_UNPAIRED;
@@ -349,50 +342,50 @@ void process_event(event_type_t event) {
             }
             break;
 
-        case STATE_SETUP_WAITING_NEW_IDENTIFIER:
-            if(event == EV_APP_IDENTIFIER_RECEIVED){
-                // k_work_cancel_delayable(&authentification_timeout_work);
-                if(save_received_app_id() == 0){
-                    current_state = STATE_AUTHENTICATED;
-                    k_work_cancel_delayable(&connection_timeout_work);
-                    ble_send_event_secure(COMMAND_ACK_AUTH);
-                    LOG_INF("APP_ID SAVED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_AUTHENTICATED\n");
-                    add_event(EV_APP_AUTHENTICATED);
-                    return;
-                } else {
-                    ble_send_event_secure(COMMAND_NACK_AUTH);
-                    LOG_INF("APP_ID NOT SAVED. WAITING FOR NEW IDENTIFIER\n");
-                }
-            } else if(event == EV_BLE_DISCONNECTED){
-                current_state = STATE_UNPAIRED;
-                ble_force_reset();
-                //storage_factory_reset();
-                current_state = STATE_UNPAIRED;
-                LOG_INF("TIMEOUT/DISCONNECTION/RESET WITHOUT CLAIMED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_UNPAIRED\n");
-            }
-            break;
-
         case STATE_SETUP_WAITING_IDENTIFIER:
             if(event == EV_APP_IDENTIFIER_RECEIVED){
-                k_work_cancel_delayable(&authentification_timeout_work);
-                if(check_app_id(joya_app_id) == 0){
-                    current_state = STATE_AUTHENTICATED;
-                    k_work_cancel_delayable(&connection_timeout_work);
-                    LOG_INF("APP_ID CHECKED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_AUTHENTICATED\n");
-                    ble_send_event_secure(COMMAND_ACK_AUTH);
-                    add_event(EV_APP_AUTHENTICATED);
-                    return;
+                if(is_app_id_empty()){
+                    // Nuevo APP_ID
+                    if(save_received_app_id() == 0){
+                        current_state = STATE_AUTHENTICATED;
+                        //k_work_cancel_delayable(&connection_timeout_work);
+                        ble_send_event_secure(COMMAND_ACK_AUTH);
+                        LOG_INF("APP_ID SAVED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_AUTHENTICATED\n");
+                        add_event(EV_APP_AUTHENTICATED);
+                        return;
+                    } else {
+                        ble_send_event_secure(COMMAND_NACK_AUTH);
+                        LOG_INF("APP_ID NOT SAVED. WAITING FOR NEW IDENTIFIER\n");
+                    }
                 } else {
-                    // current_state = STATE_BONDED_DISCONNECTED;
-                    // (to do) max retry attempts? or just wait for the next connection?
-                    LOG_INF("WRONG APP_ID. TRY AGAIN\n");
-                    ble_send_event_secure(COMMAND_NACK_AUTH);
-                    return;
+                    // APP_ID ya registrado
+                    if(check_app_id(joya_app_id) == 0){
+                        current_state = STATE_AUTHENTICATED;
+                        //k_work_cancel_delayable(&connection_timeout_work);
+                        LOG_INF("APP_ID CHECKED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_AUTHENTICATED\n");
+                        ble_send_event_secure(COMMAND_ACK_AUTH);
+                        add_event(EV_APP_AUTHENTICATED);
+                        return;
+                    } else {
+                        // current_state = STATE_BONDED_DISCONNECTED;
+                        // (to do) max retry attempts? or just wait for the next connection?
+                        LOG_INF("WRONG APP_ID. TRY AGAIN\n");
+                        ble_send_event_secure(COMMAND_NACK_AUTH);
+                        return;
+                    }
                 }
-            } else if (event == EV_BLE_DISCONNECTED){
-                current_state = STATE_BONDED_DISCONNECTED;
-                ble_start_reconnect_advertising();
-                LOG_INF("FROM: STATE_SETUP_WAITING_IDENTIFIER TO: STATE_BONDED_DISCONNECTED (reconnecting...)\n");
+            } else if(event == EV_BLE_DISCONNECTED){
+                if(is_app_id_empty()){
+                    current_state = STATE_UNPAIRED;
+                    // ble_force_reset();
+                    // storage_factory_reset();
+                    current_state = STATE_UNPAIRED;
+                    LOG_INF("TIMEOUT/DISCONNECTION/RESET WITHOUT CLAIMED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_UNPAIRED\n");
+                } else {
+                    current_state = STATE_BONDED_DISCONNECTED;
+                    ble_start_reconnect_advertising();
+                    LOG_INF("FROM: STATE_SETUP_WAITING_IDENTIFIER TO: STATE_BONDED_DISCONNECTED (reconnecting...)\n");
+                }
             }
             break;
 
