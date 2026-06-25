@@ -63,7 +63,7 @@ static void debounce_work_handler(struct k_work *work)
 
 	last_stable_pressed = pressed;
 
-	LOG_INF("BTN stable edge: pressed=%d now=%u pulse_count=%d pending=%d",
+	LOG_INF("BTN stable edge: pressed=%d now=%u pulse_count=%ld pending=%d",
 		pressed,
 		now_ms,
 		atomic_get(&pulse_count),
@@ -110,7 +110,7 @@ static void debounce_work_handler(struct k_work *work)
 
 	atomic_inc(&pulse_count);
 
-	LOG_INF("BTN short pulse counted: pulse_count=%d",
+	LOG_INF("BTN short pulse counted: pulse_count=%ld",
 		atomic_get(&pulse_count));
 
 	(void)k_work_reschedule(&click_window_work,

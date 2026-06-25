@@ -38,11 +38,16 @@ static int app_settings_set(const char *name, size_t len, settings_read_cb read_
             return rc;
         }
 
+        if (rc != len) {
+            LOG_ERR("Lectura incompleta de app_id: %d/%d", rc, len);
+            return -EINVAL;
+        }
+
         app_id_loaded_from_flash = true;
         LOG_INF("app_id cargado desde Flash con exito.");
-        LOG_HEXDUMP_DBG(joya_app_id, SIZE_APP_ID, "Contenido de app_id:"); 
-        
-        return rc;
+        LOG_HEXDUMP_DBG(joya_app_id, SIZE_APP_ID, "Contenido de app_id:");
+
+        return 0;
     }
 
     // Evaluate EMERGENCY
@@ -51,8 +56,18 @@ static int app_settings_set(const char *name, size_t len, settings_read_cb read_
             return -EINVAL;
         }
         rc = read_cb(cb_arg, &joya_is_in_emergency, len);
+        if (rc < 0) {
+            LOG_ERR("Error leyendo emergency desde Flash: %d", rc);
+            return rc;
+        }
+
+        if (rc != len) {
+            LOG_ERR("Lectura incompleta de emergency: %d/%d", rc, len);
+            return -EINVAL;
+        }
+
         LOG_INF("Cargado desde Flash -> emergency: %d", joya_is_in_emergency);
-        return rc;
+        return 0;
     }
 
     return -ENOENT;
@@ -117,7 +132,6 @@ int storage_save_app_id(const uint8_t* new_app_id) {
     memcpy(joya_app_id, new_app_id, SIZE_APP_ID);
 
     ret = settings_save_one("joya/app_id", joya_app_id, SIZE_APP_ID);
-
     if (ret != 0) {
         LOG_ERR("Error al guardar app_id en Flash. Codigo: %d", ret);
         memset(joya_app_id, 0, SIZE_APP_ID);

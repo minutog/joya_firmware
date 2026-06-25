@@ -13,7 +13,7 @@ static struct k_work_delayable emergency_retry_work;
 /** @brief Current application state */
 static volatile app_state_t current_state = STATE_UNPAIRED;
 /** @brief Message queue for events */
-K_MSGQ_DEFINE(event_queue, sizeof(event_type_t), 10, 4);
+K_MSGQ_DEFINE(event_queue, sizeof(event_type_t), 20, 4);
 
 /** @brief Thread for the finite state machine */
 K_THREAD_DEFINE(fsm_thread_id, 4098, fsm_thread_loop, NULL, NULL, NULL, 5, 0, 0);
