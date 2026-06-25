@@ -56,12 +56,10 @@ ssize_t on_rx_auth_write_handler(struct bt_conn *conn, const struct bt_gatt_attr
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
     }
 
-    if (len > 0 && len <= SIZE_APP_ID) {
-        memcpy(received_app_id, buf, SIZE_APP_ID);
-        LOG_HEXDUMP_INF(received_app_id, SIZE_APP_ID, "App ID recibido");
+    memcpy(received_app_id, buf, SIZE_APP_ID);
+    LOG_HEXDUMP_INF(received_app_id, SIZE_APP_ID, "App ID recibido");
 
-        add_event(EV_APP_IDENTIFIER_RECEIVED);
-    }
+    add_event(EV_APP_IDENTIFIER_RECEIVED);
     
     return len;
 }

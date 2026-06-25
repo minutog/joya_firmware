@@ -8,7 +8,7 @@
 #include <zephyr/bluetooth/gatt.h>
 #include "app_state.h"
 
-#define SIZE_APP_ID 5
+#define SIZE_APP_ID 16
 
 int save_received_app_id(void);
 int check_app_id(const uint8_t *app_id);

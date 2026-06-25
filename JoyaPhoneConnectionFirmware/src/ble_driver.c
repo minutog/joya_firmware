@@ -1,5 +1,8 @@
 #include "ble_driver.h"
 
+#define JOYA_ADV_NAME_SETUP      "Joya Setup"
+#define JOYA_ADV_NAME_RECONNECT  "Joya"
+
 /** @brief For logging */
 LOG_MODULE_REGISTER(ble_driver, LOG_LEVEL_INF);
 
@@ -8,6 +11,15 @@ static struct bt_uuid_128 joya_svc_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_SERVICE_
 static struct bt_uuid_128 joya_tx_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_TX_VAL);
 static struct bt_uuid_128 joya_rx_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_RX_VAL);
 static struct bt_uuid_128 joya_rx_auth_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_RX_AUTH_VAL);
+
+static const struct bt_le_adv_param joya_adv_param = {
+	.options = BT_LE_ADV_OPT_CONNECTABLE |
+		   BT_LE_ADV_OPT_ONE_TIME |
+		   BT_LE_ADV_OPT_USE_NAME,
+	.interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
+	.interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
+	.peer = NULL,
+};
 
 /** @brief Current connection */
 static struct bt_conn *current_conn = NULL;
@@ -181,22 +193,30 @@ int ble_start_setup_advertising(void) {
     return 0;
 }*/
 
-int ble_start_setup_advertising(void) {
-    int name_err = bt_set_name("Joya Setup");
-    if (name_err) {
-        LOG_WRN("Could not set dynamic name: %d", name_err);
-    }
+int ble_start_setup_advertising(void)
+{
+	int err;
 
-    bt_le_adv_stop();
+	err = bt_le_adv_stop();
+	if (err < 0 && err != -EALREADY) {
+		LOG_WRN("Failed to stop advertising before setup adv: %d", err);
+	}
 
-    int err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
-    if (err) {
-        LOG_ERR("Failed to start setup advertising. Error: %d", err);
-        return err;
-    }
+	err = bt_set_name(JOYA_ADV_NAME_SETUP);
+	if (err < 0) {
+		LOG_ERR("Failed to set setup BLE name: %d", err);
+		return err;
+	}
 
-    LOG_INF("Setup advertising started successfully");
-    return 0;
+	err = bt_le_adv_start(&joya_adv_param, NULL, 0, NULL, 0);
+	if (err < 0) {
+		LOG_ERR("Failed to start setup advertising: %d", err);
+		return err;
+	}
+
+	LOG_INF("Setup advertising started successfully");
+
+	return 0;
 }
 
 /*
@@ -206,19 +226,30 @@ int ble_start_reconnect_advertising(void) {
     LOG_INF("Setup advertising started successfully");
     return err;
 }*/
-int ble_start_reconnect_advertising(void) {
-    bt_set_name("Joya");
+int ble_start_reconnect_advertising(void)
+{
+	int err;
 
-    bt_le_adv_stop();
+	err = bt_le_adv_stop();
+	if (err < 0 && err != -EALREADY) {
+		LOG_WRN("Failed to stop advertising before reconnect adv: %d", err);
+	}
 
-    int err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
-    if (err) {
-        LOG_ERR("Failed to start reconnect advertising. Error: %d", err);
-        return err;
-    }
+	err = bt_set_name(JOYA_ADV_NAME_RECONNECT);
+	if (err < 0) {
+		LOG_ERR("Failed to set reconnect BLE name: %d", err);
+		return err;
+	}
 
-    LOG_INF("Reconnect advertising started successfully");
-    return 0;
+	err = bt_le_adv_start(&joya_adv_param, NULL, 0, NULL, 0);
+	if (err < 0) {
+		LOG_ERR("Failed to start reconnect advertising: %d", err);
+		return err;
+	}
+
+	LOG_INF("Reconnect advertising started successfully");
+
+	return 0;
 }
 
 

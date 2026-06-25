@@ -1,127 +1,194 @@
 #include "button.h"
+
+#include <errno.h>
+#include <stdbool.h>
+#include <zephyr/kernel.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 
 LOG_MODULE_REGISTER(button_mod, LOG_LEVEL_INF);
 
-static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(boton_emergencia), gpios);
+static const struct gpio_dt_spec button =
+	GPIO_DT_SPEC_GET(DT_ALIAS(boton_emergencia), gpios);
+
 static struct gpio_callback button_cb_data;
 
+static struct k_work_delayable debounce_work;
 static struct k_work_delayable click_window_work;
+
+static void debounce_work_handler(struct k_work *work);
 static void click_window_work_handler(struct k_work *work);
 
-static struct k_work button_work;
-static void button_work_handler(struct k_work *work);
+static uint32_t press_start_ms;
+static atomic_t pulse_count;
 
-volatile struct button_event {
-    uint32_t timestamp;
-    int state;
-} last_event = {0, 0};
+static bool last_stable_pressed = false;
+static bool press_active = false;
 
-static uint32_t last_edge_ms = 0;
-static volatile uint32_t pulse_count = 0;
-
-int button_init(void) {
-    int ret;
-
-    if (!gpio_is_ready_dt(&button)) {
-        return -ENODEV;
-    }
-
-    ret = gpio_pin_configure_dt(&button, GPIO_INPUT);
-    if (ret != 0) {
-        return ret;
-    }
-    
-    ret = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_BOTH);
-    if (ret != 0) {
-        return ret;
-    }
-
-    k_work_init(&button_work, button_work_handler);
-    k_work_init_delayable(&click_window_work, click_window_work_handler);
-    gpio_init_callback(&button_cb_data, button_isr_handler, BIT(button.pin));
-    gpio_add_callback(button.port, &button_cb_data);
-
-    return 0;
+static void send_button_event(event_type_t event)
+{
+	add_event(event);
 }
 
-static void button_work_handler(struct k_work *work) {
-    if(last_event.state == 1){ // Rising edge
-        last_edge_ms = last_event.timestamp;
+void button_isr_handler(const struct device *dev,
+			struct gpio_callback *cb,
+			uint32_t pins)
+{
+	ARG_UNUSED(dev);
+	ARG_UNUSED(cb);
+	ARG_UNUSED(pins);
 
-        k_work_reschedule(&click_window_work, K_MSEC(CLICK_WINDOW_MS));
-        
-
-    } else { // Falling edge
-        uint32_t press_time = k_uptime_get_32() - last_edge_ms;
-
-        if(press_time >= BUTTON_ROUTINE_CANCEL_HOLD_MS){
-            k_work_cancel_delayable(&click_window_work);
-            pulse_count = 0;
-            event_type_t event_to_send;
-
-            if(press_time >= BUTTON_FACTORY_RESET_HOLD_MS){
-                // Handle factory reset
-                event_to_send = EV_BTN_FACTORY_RESET;
-            } else {
-                // Handle routine cancel
-                event_to_send = EV_BTN_LONG_PRESS;
-            }
-
-            k_msgq_put(&event_queue, &event_to_send, K_NO_WAIT);
-            return;
-        }
-
-        if(k_work_delayable_is_pending(&click_window_work)){
-            pulse_count++;
-        } 
-        
-        // Note: if the click window work finished before this falling edge, we won't count this pulse. This is intentional to avoid counting long presses as multiple clicks. The pulse_count will be reset in the click_window_work handler.
-    }
+	(void)k_work_reschedule(&debounce_work, K_MSEC(DEBOUNTE_TIME_MS));
 }
 
-void button_isr_handler(const struct device *dev, struct gpio_callback *cb, uint32_t pins){
-    uint32_t last_edge_ms_tmp = k_uptime_get_32();
+static void debounce_work_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
 
-    // Debounce filter (for both rising and falling edges)
-    if((last_edge_ms_tmp - last_edge_ms) < DEBOUNTE_TIME_MS){
-        return;
-    }
+	uint32_t now_ms = k_uptime_get_32();
 
-    // Now that we have a valid edge, we can update the last_edge_ms variable
-    last_event.timestamp = last_edge_ms_tmp;
-    last_event.state = gpio_pin_get_dt(&button);
+	int pressed_raw = gpio_pin_get_dt(&button);
+	if (pressed_raw < 0) {
+		LOG_WRN("BTN read failed: %d", pressed_raw);
+		return;
+	}
 
-    k_work_submit(&button_work);
+	bool pressed = pressed_raw != 0;
+
+	if (pressed == last_stable_pressed) {
+		LOG_INF("BTN stable unchanged: pressed=%d", pressed);
+		return;
+	}
+
+	last_stable_pressed = pressed;
+
+	LOG_INF("BTN stable edge: pressed=%d now=%u pulse_count=%d pending=%d",
+		pressed,
+		now_ms,
+		atomic_get(&pulse_count),
+		k_work_delayable_is_pending(&click_window_work));
+
+	if (pressed) {
+		press_start_ms = now_ms;
+		press_active = true;
+
+		if (atomic_get(&pulse_count) > 0) {
+			LOG_INF("BTN next press: cancel click window");
+			(void)k_work_cancel_delayable(&click_window_work);
+		}
+
+		return;
+	}
+
+	if (!press_active) {
+		LOG_WRN("BTN release ignored: no active press");
+		return;
+	}
+
+	press_active = false;
+
+	uint32_t press_time_ms = now_ms - press_start_ms;
+
+	LOG_INF("BTN release: press_time=%u ms", press_time_ms);
+
+	if (press_time_ms >= BUTTON_ROUTINE_CANCEL_HOLD_MS) {
+		(void)k_work_cancel_delayable(&click_window_work);
+		atomic_set(&pulse_count, 0);
+
+		if (press_time_ms >= BUTTON_FACTORY_RESET_HOLD_MS) {
+			LOG_INF("BTN event: factory reset");
+			send_button_event(EV_BTN_FACTORY_RESET);
+		} else {
+			LOG_INF("BTN event: long press");
+			send_button_event(EV_BTN_LONG_PRESS);
+		}
+
+		return;
+	}
+
+
+	atomic_inc(&pulse_count);
+
+	LOG_INF("BTN short pulse counted: pulse_count=%d",
+		atomic_get(&pulse_count));
+
+	(void)k_work_reschedule(&click_window_work,
+				 K_MSEC(CLICK_WINDOW_MS));
+
+	LOG_INF("BTN click window scheduled: %u ms", CLICK_WINDOW_MS);
 }
 
-// This function is called after the click window expires. We can now determine how many clicks were detected.
-static void click_window_work_handler(struct k_work *work) {
-    event_type_t event_to_send;
-    int count = pulse_count;
-    bool valid_event = false;
-    pulse_count = 0;
+static void click_window_work_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
 
-    if(count == 0){
-        // No clicks detected, this can happen if the user just pressed and released the button without waiting for the click window to expire. In this case, we won't send any event.
-        return;
-    } else
-    if(count == 1){
-        // Handle single click
-        event_to_send = EV_BTN_1_PULSE;
-        valid_event = true;
-    } else if(count == 2){
-        // Handle double click
-        event_to_send = EV_BTN_2_PULSE;
-        valid_event = true;
-    } else if(count > 2){
-        // Launch emergency
-        event_to_send = EV_BTN_EMERGENCY;
-        valid_event = true;
-    }
+	uint32_t count = atomic_set(&pulse_count, 0);
 
-    if(valid_event){
-        add_event(event_to_send);
-    }
+	LOG_INF("BTN window expired: count=%u", count);
 
+	if (count == 0) {
+		return;
+	}
+
+	if (count == 1) {
+		LOG_INF("BTN event: 1 pulse");
+		send_button_event(EV_BTN_1_PULSE);
+	} else if (count == 2) {
+		LOG_INF("BTN event: 2 pulses");
+		send_button_event(EV_BTN_2_PULSE);
+	} else {
+		LOG_INF("BTN event: emergency pulses");
+		send_button_event(EV_BTN_EMERGENCY);
+	}
+}
+
+int button_init(void)
+{
+	int ret;
+
+	if (!gpio_is_ready_dt(&button)) {
+		LOG_ERR("Button GPIO is not ready");
+		return -ENODEV;
+	}
+
+	ret = gpio_pin_configure_dt(&button, GPIO_INPUT);
+	if (ret != 0) {
+		LOG_ERR("Failed to configure button GPIO: %d", ret);
+		return ret;
+	}
+
+	int initial_pressed = gpio_pin_get_dt(&button);
+	if (initial_pressed < 0) {
+		LOG_ERR("Failed to read initial button state: %d", initial_pressed);
+		return initial_pressed;
+	}
+
+	last_stable_pressed = initial_pressed != 0;
+	press_active = false;
+	atomic_set(&pulse_count, 0);
+
+	k_work_init_delayable(&debounce_work, debounce_work_handler);
+	k_work_init_delayable(&click_window_work, click_window_work_handler);
+
+	gpio_init_callback(&button_cb_data,
+			   button_isr_handler,
+			   BIT(button.pin));
+
+	ret = gpio_add_callback(button.port, &button_cb_data);
+	if (ret != 0) {
+		LOG_ERR("Failed to add button callback: %d", ret);
+		return ret;
+	}
+
+	ret = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_BOTH);
+	if (ret != 0) {
+		LOG_ERR("Failed to configure button interrupt: %d", ret);
+		(void)gpio_remove_callback(button.port, &button_cb_data);
+		return ret;
+	}
+
+	LOG_INF("Button initialized. initial_pressed=%d", last_stable_pressed);
+
+	return 0;
 }

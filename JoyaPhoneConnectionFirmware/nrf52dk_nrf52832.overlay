@@ -4,9 +4,12 @@
 
 / {
 	joya_buttons {
+		compatible = "gpio-keys";
+
 		emergency_button: emergency_button {
 			gpios = <&gpio0 13 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 			label = "Joya emergency button";
+			zephyr,code = <INPUT_KEY_0>;
 		};
 	};
 
@@ -42,4 +45,8 @@
 	pinctrl-0 = <&i2c0_default>;
 	pinctrl-1 = <&i2c0_sleep>;
 	pinctrl-names = "default", "sleep";
+};
+
+&uart0 {
+	status = "disabled";
 };
