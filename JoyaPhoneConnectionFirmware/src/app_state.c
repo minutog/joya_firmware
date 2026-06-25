@@ -117,8 +117,17 @@ app_state_t get_current_state(void) {
     return current_state;
 }
 
-int add_event(event_type_t event) {
-    return k_msgq_put(&event_queue, &event, K_NO_WAIT);
+
+int add_event(event_type_t event)
+{
+	int err = k_msgq_put(&event_queue, &event, K_NO_WAIT);
+
+	if (err == -ENOMSG) {
+		LOG_ERR("Event queue full, dropped event %d", event);
+	} else if (err) {
+		LOG_ERR("Failed to enqueue event %d: %d", event, err);
+	}
+	return err;
 }
 
 void fsm_thread_loop(void) {
@@ -194,18 +203,35 @@ void process_event(event_type_t event) {
         return;
     }
 
+    /*
+    * Note: Emergency can be triggered locally before the app is authenticated.
+    * However, app-originated emergency commands are only accepted after the
+    * secure channel is ready.
+    */
     if (is_in_emergency()) {
         switch (event) {
             case EV_APP_FOLLOW_ME:
+                if (current_state != STATE_AUTHENTICATED) {
+                    LOG_WRN("FOLLOW_ME ignored: emergency active but app not authenticated");
+                    return;
+                }
                 haptics_play(HAPTICS_PATTERN_FOLLOW_ME);
                 return;
             
             case EV_APP_ACK_EMERGENCY:
+                if (current_state != STATE_AUTHENTICATED) {
+                    LOG_WRN("FOLLOW_ME ignored: emergency active but app not authenticated");
+                    return;
+                }
                 emergency_stop_alerts();
                 LOG_INF("Emergency acknowledged, retries stopped");
                 return;
 
             case EV_APP_STOP_EMERGENCY:
+                if (current_state != STATE_AUTHENTICATED) {
+                    LOG_WRN("FOLLOW_ME ignored: emergency active but app not authenticated");
+                    return;
+                }
                 emergency_stop_alerts();
                 storage_save_emergency_state(false);
                 LOG_INF("Emergency stopped");
@@ -393,6 +419,11 @@ void process_event(event_type_t event) {
             break;
     }
 
+    /*
+     * Note: factory reset is intentionally ignored while emergency is active.
+     * Requirement: emergency handling has priority and must not be interrupted
+     * by local reset actions.
+     */
     if (event == EV_BTN_FACTORY_RESET) {
         LOG_INF("FROM: %d TO: STATE_UNPAIRED\n", current_state);
         current_state = STATE_UNPAIRED;

@@ -26,13 +26,21 @@ static struct bt_conn *current_conn = NULL;
 static bool notify_enabled = false;
 static bool authenticated = false;
 
+static K_MUTEX_DEFINE(conn_mutex);
+
 /**
  * CALLBACKS (see app_comm.c)
  */
 
 static void on_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value) {
-    notify_enabled = (value == BT_GATT_CCC_NOTIFY);
+    bool enabled = (value == BT_GATT_CCC_NOTIFY);
+
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    notify_enabled = enabled;
+    k_mutex_unlock(&conn_mutex);
+    
     LOG_INF("Notifications %s", notify_enabled ? "enabled" : "disabled");
+    
     on_ccc_changed_handler(attr, value);
 }
 
@@ -52,7 +60,20 @@ static void on_connected(struct bt_conn *conn, uint8_t err) {
         LOG_ERR("Connection error: %d", err);
         return;
     }
+
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    if(current_conn){
+        k_mutex_unlock(&conn_mutex);
+        LOG_WRN("Already connected. Disconnecting the new connection.");
+        bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+        return;
+    }
+
     current_conn = bt_conn_ref(conn);
+    notify_enabled = false;
+
+    k_mutex_unlock(&conn_mutex);
+
     LOG_INF("Phone connected");
 
     on_connected_handler(conn, err);
@@ -60,12 +81,23 @@ static void on_connected(struct bt_conn *conn, uint8_t err) {
 
 
 static void on_disconnected(struct bt_conn *conn, uint8_t reason) {
-    LOG_INF("Phone disconnected (Reason: %d)", reason);
-    if (current_conn) {
-        bt_conn_unref(current_conn);
+    struct bt_conn *old_conn = NULL;
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+
+    if(current_conn == conn) {
+        old_conn = current_conn;
         current_conn = NULL;
     }
+
     notify_enabled = false;
+    authenticated = false;
+    k_mutex_unlock(&conn_mutex);
+
+    if(old_conn) {
+        bt_conn_unref(old_conn);
+    }
+
+    LOG_INF("Phone disconnected (Reason: %d)", reason);
 
     on_disconnected_handler(conn, reason);
 }
@@ -75,6 +107,20 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
     .disconnected = on_disconnected,
 };
 
+static struct bt_conn *get_current_conn_ref(void)
+{
+	struct bt_conn *conn = NULL;
+
+	k_mutex_lock(&conn_mutex, K_FOREVER);
+
+	if (current_conn && notify_enabled) {
+		conn = bt_conn_ref(current_conn);
+	}
+
+	k_mutex_unlock(&conn_mutex);
+
+	return conn;
+}
 
 /**
  * GATT SERVICE DEFINITION
@@ -117,20 +163,36 @@ static const struct bt_data ad[] = {
  * @param event_byte The 1-byte code to send.
  * @return 0 on success, or a negative error code on failure.
  */
-static int ble_send_notify(uint8_t event_byte) {
-    if (!current_conn || !notify_enabled) {
-        LOG_WRN("Cannot send notification (No connection or CCCD disabled)");
-        return -ENOTCONN;
-    }
+static int ble_send_notify(const uint8_t *data, uint16_t len)
+{
+	struct bt_conn *conn;
+	const struct bt_gatt_attr *tx_attr;
+	int err;
 
-    const struct bt_gatt_attr *attr = bt_gatt_find_by_uuid(joya_svc.attrs, 0xFFFF, &joya_tx_uuid.uuid);
-    if (!attr) {
-        return -EINVAL;
-    }
+	conn = get_current_conn_ref();
+	if (!conn) {
+		LOG_WRN("Notify skipped: no active connection or notifications disabled");
+		return -ENOTCONN;
+	}
 
-    int err = bt_gatt_notify(current_conn, attr, &event_byte, sizeof(event_byte));
-    LOG_INF("Notification sent: 0x%02X (Status: %d)", event_byte, err);
-    return err;
+	tx_attr = bt_gatt_find_by_uuid(joya_svc.attrs,
+				       joya_svc.attr_count,
+				       &joya_tx_uuid.uuid);
+	if (!tx_attr) {
+		LOG_ERR("TX characteristic attribute not found");
+		bt_conn_unref(conn);
+		return -ENOENT;
+	}
+
+	err = bt_gatt_notify(conn, tx_attr, data, len);
+
+	bt_conn_unref(conn);
+
+	if (err) {
+		LOG_WRN("Notify failed: %d", err);
+	}
+
+	return err;
 }
 
 
@@ -164,7 +226,7 @@ int ble_start_setup_advertising(void)
 		return err;
 	}
 
-	err = bt_le_adv_start(&joya_adv_param, NULL, 0, NULL, 0);
+	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err < 0) {
 		LOG_ERR("Failed to start setup advertising: %d", err);
 		return err;
@@ -190,7 +252,7 @@ int ble_start_reconnect_advertising(void)
 		return err;
 	}
 
-	err = bt_le_adv_start(&joya_adv_param, NULL, 0, NULL, 0);
+	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err < 0) {
 		LOG_ERR("Failed to start reconnect advertising: %d", err);
 		return err;

@@ -133,29 +133,41 @@ int storage_save_emergency_state(bool is_active)
     int ret;
     if(joya_is_in_emergency == is_active) {
         LOG_INF("Estado de emergencia ya es %d, no se necesita guardar en Flash", is_active);
-        return 0; // No hay cambios, no necesitamos escribir en Flash
+        return 0;
     }
+
+    /*
+	 * Note: RAM state is updated first on purpose. Emergency handling is an
+	 * operational state and must take effect immediately even if persistence
+	 * fails. Flash is only used to restore the state after a reboot.
+	 */
     joya_is_in_emergency = is_active;
     ret = settings_save_one("joya/emergency", &joya_is_in_emergency, sizeof(joya_is_in_emergency));
     // (to do): decide what to do if settings_save_one fails (e.g., retry, log error, etc.)
+    
     LOG_INF("Estado de emergencia guardado en Flash");
-    return ret; // Devolvemos el resultado de la operación de guardado
+    return ret;
 }
 
 int storage_factory_reset(void)
 {
     int ret;
+    
     ret = settings_delete("joya/app_id");
     if (ret != 0) {
         LOG_ERR("Error al borrar app_id de Flash (err %d)", ret);
+        return ret;
     }
+
     ret = settings_delete("joya/emergency");
     if (ret != 0) {
         LOG_ERR("Error al borrar estado de emergencia de Flash (err %d)", ret);
+        return ret;
     }
 
     memset(joya_app_id, 0, sizeof(joya_app_id));
     joya_is_in_emergency = false;
+
     LOG_INF("Memoria Flash borrada (Factory Reset)");
     return 0;
 }
