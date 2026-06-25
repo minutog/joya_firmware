@@ -1,9 +1,12 @@
-#ifndef AAP_COMM_H
-#define AAP_COMM_H
+#ifndef APP_COMM_H
+#define APP_COMM_H
 
 #include <stdint.h>
+#include <stddef.h>
+#include <sys/types.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/gatt.h>
 #include "app_state.h"
-#include "flash_memory.h"
 
 #define SIZE_APP_ID 5
 
@@ -25,7 +28,7 @@ void on_ccc_changed_handler(const struct bt_gatt_attr *attr, uint16_t value);
  * @param flags The flags for the received data
  * @return The number of bytes processed
  */
-size_t on_rx_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
+ssize_t on_rx_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
 
 /** @brief Handler for connected events
  * @param conn The Bluetooth connection
@@ -52,10 +55,10 @@ enum {
     END_JOYA_COMMAND = 0x07,
 
     INIT_APP_COMMAND = 0x40,
-    // (to do): FRIEND_EMERGENCY
-    COMMAND_STOP_EMERGENCY = 0x41,
-    COMMAND_ACK_EMERGENCY = 0x42,
+    COMMAND_ACK_EMERGENCY = 0x41,
+    COMMAND_STOP_EMERGENCY = 0x42,
     COMMAND_FOLLOW_ME = 0x43,
+    COMMAND_FRIEND_EMERGENCY = 0x44,
     END_APP_COMMAND = 0x44,
 };
 

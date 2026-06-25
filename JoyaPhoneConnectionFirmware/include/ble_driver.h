@@ -13,14 +13,10 @@
 // --- UUIDs of JOYA custom service ---
 // Main service UUID
 
-// (to do): create random UUIDs for production, these are just examples
-#define BT_UUID_JOYA_SERVICE_VAL BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef0)
-// TX Characteristic UUID
-#define BT_UUID_JOYA_TX_VAL      BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef1)
-// RX Characteristic UUID
-#define BT_UUID_JOYA_RX_VAL      BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef2)
-// RX AUTH Characteristic UUID
-#define BT_UUID_JOYA_RX_AUTH    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef3)
+#define BT_UUID_JOYA_SERVICE_VAL    BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585343)
+#define BT_UUID_JOYA_TX_VAL         BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585344)
+#define BT_UUID_JOYA_RX_VAL         BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585345)
+#define BT_UUID_JOYA_RX_AUTH_VAL    BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585346)
 
 bool is_ble_connected(void);
 
@@ -64,7 +60,7 @@ int ble_stop_advertising(void);
  */
 void ble_force_reset(void);
 
-bool is_notif_enabled(void);
+bool is_notify_enabled(void);
 bool is_authenticated(void);
 void set_authenticated(bool auth_status);
 

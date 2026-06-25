@@ -4,6 +4,7 @@
 #include "ble_driver.h"
 #include "app_comm.h"
 #include "flash_memory.h"
+#include "haptics.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -50,10 +51,10 @@ typedef enum {
     EV_APP_AUTHENTICATED,
 
     // APPLICATION EVENTS
-    EV_APP_CMD_STOP_EMERGENCY,     
-    EV_APP_CMD_FOLLOW_ME,
+    EV_APP_STOP_EMERGENCY,     
+    EV_APP_FOLLOW_ME,
     EV_APP_ACK_EMERGENCY,
-    EV_FRIEND_EMERGENCY
+    EV_APP_FRIEND_EMERGENCY
 } event_type_t;
 
 /** @brief Process an event

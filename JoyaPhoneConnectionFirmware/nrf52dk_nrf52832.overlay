@@ -1,5 +1,45 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+
 / {
-    aliases {
-        boton-emergencia = &button0;
-    };
+	joya_buttons {
+		emergency_button: emergency_button {
+			gpios = <&gpio0 13 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "Joya emergency button";
+		};
+	};
+
+	zephyr,user {
+		haptic_en_gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+	};
+
+	aliases {
+		boton-emergencia = &emergency_button;
+	};
+};
+
+&pinctrl {
+	i2c0_default: i2c0_default {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SDA, 0, 8)>,
+				<NRF_PSEL(TWIM_SCL, 0, 6)>;
+		};
+	};
+
+	i2c0_sleep: i2c0_sleep {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SDA, 0, 8)>,
+				<NRF_PSEL(TWIM_SCL, 0, 6)>;
+			low-power-enable;
+		};
+	};
+};
+
+&i2c0 {
+	status = "okay";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+	pinctrl-0 = <&i2c0_default>;
+	pinctrl-1 = <&i2c0_sleep>;
+	pinctrl-names = "default", "sleep";
 };

@@ -13,5 +13,6 @@ void storage_factory_reset(void);
 void storage_save_emergency_state(bool is_active);
 bool is_in_emergency(void);
 bool is_app_id_empty(void);
+const uint8_t* storage_get_app_id(void);
 
 #endif

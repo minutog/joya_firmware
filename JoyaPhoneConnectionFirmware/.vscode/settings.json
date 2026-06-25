@@ -1,27 +1,6 @@
 {
-  "joya.ncsRoot": "/opt/nordic/ncs/v2.9.1",
-  "joya.ncsToolchainBin": "/opt/nordic/ncs/toolchains/b8efef2ad5/bin",
-  "joya.appSymlink": "/tmp/joya_phone_connection_fw",
-  "joya.board": "nrf52dk/nrf52832",
-  "nrf-connect.flash.softreset": true,
-  "nrf-connect.taskBindings": {
-    "flash": [
-      {
-        "taskName": "Flash firmware (DK -> custom PCB)"
-      }
-    ],
-    "eraseAndFlash": [
-      {
-        "taskName": "Flash firmware (DK -> custom PCB)"
-      }
-    ]
-  },
-  "nrf-connect.applications": [
-    "${workspaceFolder}"
-  ],
-  "west.env": {
-    "ZEPHYR_SDK_INSTALL_DIR": "/opt/zephyr-sdk-0.16.8",
-    "ESP_IDF_PATH": "/opt/espressif/esp-idf"
-  },
-  "C_Cpp.errorSquiggles": "enabled"
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+    "C_Cpp.default.compilerPath": "/home/fran/zephyr-sdk-0.17.4/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc",
+    "C_Cpp.default.intelliSenseMode": "gcc-arm",
+    "C_Cpp.errorSquiggles": "enabled"
 }

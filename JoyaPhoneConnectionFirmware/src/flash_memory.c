@@ -3,8 +3,12 @@
 LOG_MODULE_REGISTER(app_flash, LOG_LEVEL_INF);
 
 bool app_id_loaded_from_flash = false;
-char joya_app_id[SIZE_APP_ID] = {0};
+uint8_t joya_app_id[SIZE_APP_ID] = {0};
 static bool joya_is_in_emergency = false; // Variable to store the emergency state
+
+const uint8_t* storage_get_app_id(void) {
+    return joya_app_id;
+}
 
 /**
  * @brief Callback function for settings subsystem to load data from flash
