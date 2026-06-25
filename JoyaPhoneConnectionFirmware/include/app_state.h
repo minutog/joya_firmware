@@ -9,8 +9,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <zephyr/kernel.h>
-#include <zephyr/sys/printk.h>
-#include <zephyr/logging/log.h>
 
 #define EMERGENCY_RETRY_INITIAL_MS 1000
 #define EMERGENCY_RETRY_FAST_MS 2000

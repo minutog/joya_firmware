@@ -5,7 +5,6 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
 #include <errno.h>
 
 #define DRV2605_I2C_ADDR_LOW			0x5A

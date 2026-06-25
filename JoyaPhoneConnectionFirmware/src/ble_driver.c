@@ -3,8 +3,6 @@
 #define JOYA_ADV_NAME_SETUP      "Joya Setup"
 #define JOYA_ADV_NAME_RECONNECT  "Joya"
 
-/** @brief For logging */
-LOG_MODULE_REGISTER(ble_driver, LOG_LEVEL_INF);
 
 /** @brief UUIDs for the GATT service */
 static struct bt_uuid_128 joya_svc_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_SERVICE_VAL);
@@ -37,9 +35,7 @@ static void on_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value) {
     k_mutex_lock(&conn_mutex, K_FOREVER);
     notify_enabled = enabled;
     k_mutex_unlock(&conn_mutex);
-    
-    LOG_INF("Notifications %s", notify_enabled ? "enabled" : "disabled");
-    
+        
     on_ccc_changed_handler(attr, value);
 }
 
@@ -57,14 +53,13 @@ static ssize_t on_rx_auth_write(struct bt_conn *conn, const struct bt_gatt_attr 
 
 static void on_connected(struct bt_conn *conn, uint8_t err) {
     if (err) {
-        LOG_ERR("Connection error: %d", err);
+        // (improvement): decide what to do if connection fails (e.g., retry, log error, etc.)
         return;
     }
 
     k_mutex_lock(&conn_mutex, K_FOREVER);
     if(current_conn){
         k_mutex_unlock(&conn_mutex);
-        LOG_WRN("Already connected. Disconnecting the new connection.");
         bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
         return;
     }
@@ -74,7 +69,6 @@ static void on_connected(struct bt_conn *conn, uint8_t err) {
 
     k_mutex_unlock(&conn_mutex);
 
-    LOG_INF("Phone connected");
 
     on_connected_handler(conn, err);
 }
@@ -96,7 +90,6 @@ static void on_disconnected(struct bt_conn *conn, uint8_t reason) {
         bt_conn_unref(old_conn);
     }
 
-    LOG_INF("Phone disconnected (Reason: %d)", reason);
 
     on_disconnected_handler(conn, reason);
 }
@@ -178,8 +171,6 @@ static int ble_send_notify(struct bt_conn * conn, uint8_t event_byte){
 
 	err = bt_gatt_notify(conn, attr, &event_byte, sizeof(event_byte));
 
-	LOG_INF("Notification sent: 0x%02X (Status: %d)", event_byte, err);
-
 	return err;
 }
 
@@ -191,11 +182,9 @@ static int ble_send_notify(struct bt_conn * conn, uint8_t event_byte){
 int ble_driver_init(void) {
     int err = bt_enable(NULL);
     if (err) {
-        LOG_ERR("Error enabling BT: %d", err);
         return err;
     }
     
-    LOG_INF("Bluetooth initialized successfully");
     return 0;
 }
 
@@ -205,22 +194,19 @@ int ble_start_setup_advertising(void)
 
 	err = bt_le_adv_stop();
 	if (err < 0 && err != -EALREADY) {
-		LOG_WRN("Failed to stop advertising before setup adv: %d", err);
+		// (improvement): decide what to do if stopping advertising fails (e.g., retry, log error, etc.)
 	}
 
 	err = bt_set_name(JOYA_ADV_NAME_SETUP);
 	if (err < 0) {
-		LOG_ERR("Failed to set setup BLE name: %d", err);
 		return err;
 	}
 
 	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err < 0) {
-		LOG_ERR("Failed to start setup advertising: %d", err);
 		return err;
 	}
 
-	LOG_INF("Setup advertising started successfully");
 
 	return 0;
 }
@@ -231,22 +217,19 @@ int ble_start_reconnect_advertising(void)
 
 	err = bt_le_adv_stop();
 	if (err < 0 && err != -EALREADY) {
-		LOG_WRN("Failed to stop advertising before reconnect adv: %d", err);
+		// (improvement): decide what to do if stopping advertising fails (e.g., retry, log error, etc.)
 	}
 
 	err = bt_set_name(JOYA_ADV_NAME_RECONNECT);
 	if (err < 0) {
-		LOG_ERR("Failed to set reconnect BLE name: %d", err);
 		return err;
 	}
 
 	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err < 0) {
-		LOG_ERR("Failed to start reconnect advertising: %d", err);
 		return err;
 	}
 
-	LOG_INF("Reconnect advertising started successfully");
 
 	return 0;
 }
@@ -260,7 +243,6 @@ int ble_stop_advertising(void) {
 int ble_send_event_secure(uint8_t event_byte) {
     struct bt_conn *conn = get_current_conn_ref();
     if (!conn) {
-        LOG_WRN("Cannot send event: no active connection or notifications not enabled");
         return -ENOTCONN;
     }
 
@@ -288,9 +270,7 @@ int ble_disconnect(void) {
         bt_conn_unref(conn);
 
         if (err) {
-            LOG_ERR("Failed to disconnect: %d", err);
-        } else {
-            LOG_INF("Disconnected");
+            // (improvement): decide what to do if disconnection fails (e.g., retry, log error, etc.)
         }
 
         /*
@@ -305,7 +285,7 @@ int ble_disconnect(void) {
         // Advertising was already stopped, which is fine
         adv_err = 0;
     } else if (adv_err) {
-        LOG_WRN("Failed to stop advertising: %d", adv_err);
+        // (improvement): decide what to do if stopping advertising fails (e.g., retry, log error, etc.)
     }
 
     return err ? err : adv_err;

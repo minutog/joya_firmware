@@ -3,7 +3,6 @@
 
 #include <zephyr/settings/settings.h>
 #include <string.h>
-#include <zephyr/logging/log.h>
 
 #include "app_comm.h"
 

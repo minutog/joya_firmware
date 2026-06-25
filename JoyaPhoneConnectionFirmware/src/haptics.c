@@ -1,7 +1,5 @@
 #include "haptics.h"
 
-LOG_MODULE_REGISTER(haptics, LOG_LEVEL_INF);
-
 #define HAPTIC_NODE DT_PATH(zephyr_user)
 
 #if !DT_NODE_EXISTS(HAPTIC_NODE)
@@ -114,13 +112,11 @@ static int drv2605_set_rtp(uint8_t amplitude)
 
 	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_RTP);
 	if (err < 0) {
-		LOG_ERR("Failed to set RTP mode: %d", err);
 		return err;
 	}
 
 	err = drv2605_write_reg(DRV2605_REG_RTP_INPUT, amplitude);
 	if (err < 0) {
-		LOG_ERR("Failed to write RTP input: %d", err);
 		return err;
 	}
 
@@ -229,12 +225,8 @@ static void haptics_pattern_work_handler(struct k_work *work)
 		return;
 	}
 
-	LOG_DBG("Haptic step: pattern=%d amplitude=%u duration=%u ms",
-		active_pattern, amplitude, duration_ms);
-
 	err = drv2605_set_rtp(amplitude);
 	if (err < 0) {
-		LOG_ERR("Stopping haptic pattern due to I2C error: %d", err);
 		drv2605_idle();
 		return;
 	}
@@ -256,18 +248,15 @@ int haptics_init(void)
 	}
 
 	if (!device_is_ready(haptic_i2c)) {
-		LOG_WRN("I2C device is not ready");
 		return -ENODEV;
 	}
 
 	if (!gpio_is_ready_dt(&haptic_en)) {
-		LOG_WRN("Haptic enable GPIO is not ready");
 		return -ENODEV;
 	}
 
 	err = gpio_pin_configure_dt(&haptic_en, GPIO_OUTPUT_ACTIVE);
 	if (err < 0) {
-		LOG_ERR("Failed to configure haptic enable GPIO: %d", err);
 		return err;
 	}
 
@@ -275,45 +264,36 @@ int haptics_init(void)
 
 	err = i2c_recover_bus(haptic_i2c);
 	if (err < 0 && err != -ENOSYS) {
-		LOG_WRN("I2C bus recover failed: %d", err);
+		// (improvement): decide what to do if I2C bus recovery fails (e.g., retry, log error, etc.)
 	}
 
 	drv2605_addr = DRV2605_I2C_ADDR_LOW;
 	err = drv2605_probe_addr(drv2605_addr);
 
 	if (err < 0) {
-		LOG_WRN("DRV2605 not found at 0x%02x, trying 0x%02x",
-			DRV2605_I2C_ADDR_LOW, DRV2605_I2C_ADDR_HIGH);
-
 		drv2605_addr = DRV2605_I2C_ADDR_HIGH;
 		err = drv2605_probe_addr(drv2605_addr);
 	}
 
 	if (err < 0) {
-		LOG_ERR("DRV2605 not found on I2C bus");
 		(void)gpio_pin_set_dt(&haptic_en, 0);
 		return -ENODEV;
 	}
 
 	(void)drv2605_read_reg(DRV2605_REG_STATUS, &status);
-	LOG_INF("DRV2605 found at 0x%02x, status=0x%02x", drv2605_addr, status);
 
 	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
 	if (err < 0) {
-		LOG_ERR("Failed to set internal trigger mode: %d", err);
 		return err;
 	}
 
 	// Note: 0x01 is the value used in the old firmware
 	err = drv2605_write_reg(DRV2605_REG_LIBRARY, 0x01);
 	if (err < 0) {
-		LOG_ERR("Failed to set DRV2605 library: %d", err);
 		return err;
 	}
 
 	haptics_ready = true;
-
-	LOG_INF("Haptics initialized");
 
 	return 0;
 }
@@ -321,7 +301,6 @@ int haptics_init(void)
 void haptics_play_effect(enum haptics_effect effect)
 {
     if (!haptics_ready) {
-        LOG_WRN("Haptics not initialized");
         return;
     }
 
@@ -332,14 +311,14 @@ void haptics_play_effect(enum haptics_effect effect)
 
     int err = drv2605_play_effect((uint8_t)effect);
     if (err < 0) {
-        LOG_ERR("Failed to play effect %d (%d)", effect, err);
+        // (improvement): decide what to do if playing effect fails (e.g., retry, log error, etc.)
     }
 }
 
 void haptics_play(enum haptics_pattern pattern)
 {
 	if (!haptics_ready) {
-        LOG_WRN("Haptics not initialized");
+        // (improvement): decide what to do if haptics is not initialized (e.g., log error, return error, etc.)
         return;
     }
 	

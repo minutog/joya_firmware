@@ -1,7 +1,5 @@
 #include "app_comm.h"
 
-LOG_MODULE_REGISTER(app_comm, LOG_LEVEL_INF);
-
 uint8_t received_app_id[SIZE_APP_ID] = {0};
 /**
  * BLE CALLBACKS
@@ -20,17 +18,14 @@ ssize_t on_rx_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *att
 
     // Note: the protocol expects one complete command per BLE write.
     if (offset != 0) {
-        LOG_WRN("RX write rejected: unsupported offset %u", offset);
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
     }
 
     if (len != 1) {
-        LOG_WRN("Recibida longitud invalida: %d\n", len);
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
     }
 
     uint8_t val = ((uint8_t *)buf)[0];
-    LOG_INF("App escribio el comando: 0x%02X\n", val);
 
     event_type_t ev;
     if (val == COMMAND_STOP_EMERGENCY) {
@@ -46,7 +41,7 @@ ssize_t on_rx_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *att
         ev = EV_APP_FRIEND_EMERGENCY;
         add_event(ev);
     } else {
-        LOG_WRN("Comando desconocido recibido: 0x%02X\n", val);
+        // (improvement): handle unknown command if needed
     }
     
     return len;
@@ -56,16 +51,13 @@ ssize_t on_rx_auth_write_handler(struct bt_conn *conn, const struct bt_gatt_attr
 {
     // Note: APP_ID must be sent in a single BLE write; fragmented writes are not supported.
     if (offset != 0) {
-        LOG_WRN("RX write rejected: unsupported offset %u", offset);
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
     }
     if (len != SIZE_APP_ID) {
-        LOG_WRN("App ID length invalid: %u", len);
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
     }
 
     memcpy(received_app_id, buf, SIZE_APP_ID);
-    LOG_HEXDUMP_INF(received_app_id, SIZE_APP_ID, "App ID recibido");
 
     add_event(EV_APP_IDENTIFIER_RECEIVED);
     

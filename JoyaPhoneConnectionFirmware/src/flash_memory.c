@@ -1,7 +1,5 @@
 #include "flash_memory.h"
 
-LOG_MODULE_REGISTER(app_flash, LOG_LEVEL_INF);
-
 bool app_id_loaded_from_flash = false;
 uint8_t joya_app_id[SIZE_APP_ID] = {0};
 static bool joya_is_in_emergency = false;
@@ -28,24 +26,19 @@ static int app_settings_set(const char *name, size_t len, settings_read_cb read_
     if (settings_name_steq(name, "app_id", &next) && !next) {
         
         if (len != SIZE_APP_ID) {
-            LOG_ERR("Error: Tamaño en Flash (%d) no coincide con SIZE_APP_ID", len);
             return -EINVAL; 
         }
 
         rc = read_cb(cb_arg, joya_app_id, len);
         if (rc < 0) {
-            LOG_ERR("Error leyendo app_id desde Flash: %d", rc);
             return rc;
         }
 
         if (rc != len) {
-            LOG_ERR("Lectura incompleta de app_id: %d/%d", rc, len);
             return -EINVAL;
         }
 
         app_id_loaded_from_flash = true;
-        LOG_INF("app_id cargado desde Flash con exito.");
-        LOG_HEXDUMP_DBG(joya_app_id, SIZE_APP_ID, "Contenido de app_id:");
 
         return 0;
     }
@@ -57,16 +50,13 @@ static int app_settings_set(const char *name, size_t len, settings_read_cb read_
         }
         rc = read_cb(cb_arg, &joya_is_in_emergency, len);
         if (rc < 0) {
-            LOG_ERR("Error leyendo emergency desde Flash: %d", rc);
             return rc;
         }
 
         if (rc != len) {
-            LOG_ERR("Lectura incompleta de emergency: %d/%d", rc, len);
             return -EINVAL;
         }
 
-        LOG_INF("Cargado desde Flash -> emergency: %d", joya_is_in_emergency);
         return 0;
     }
 
@@ -97,26 +87,19 @@ int storage_init(void)
     // Inicializar el subsistema
     int err = settings_subsys_init();
     if (err) {
-        LOG_ERR("Error inicializando Settings (err %d)", err);
         return err;
     }
 
-    LOG_INF("Cargando configuraciones desde Flash...");
     // Esto dispara la lectura en Flash y llama a tu función 'app_settings_set'
     err = settings_load();
     if (err) {
-        LOG_ERR("Error cargando Settings desde Flash: %d", err);
         return err;
     }
     
     if (!app_id_loaded_from_flash) {
-        LOG_INF("No app_id in flash. Using empty app_id in RAM.");
         memset(joya_app_id, 0, SIZE_APP_ID);
-    } else {
-        LOG_INF("El ID ya existía en la Flash. Saltando escritura para proteger el silicio.");
     }
 
-    LOG_INF("Subsistema de almacenamiento listo.");
     return 0;
 }
 
@@ -133,20 +116,18 @@ int storage_save_app_id(const uint8_t* new_app_id) {
 
     ret = settings_save_one("joya/app_id", joya_app_id, SIZE_APP_ID);
     if (ret != 0) {
-        LOG_ERR("Error al guardar app_id en Flash. Codigo: %d", ret);
         memset(joya_app_id, 0, SIZE_APP_ID);
-        return ret; // Propagamos el error de la Flash
+        return ret;
     }
 
-    LOG_INF("app_id guardado de forma segura en Flash");
-    return 0; // Éxito total
+    return 0;
 }
 
 int storage_save_emergency_state(bool is_active)
 {
     int ret;
     if(joya_is_in_emergency == is_active) {
-        LOG_INF("Estado de emergencia ya es %d, no se necesita guardar en Flash", is_active);
+        // joya_is_in_emergency has not changed, no need to save to flash
         return 0;
     }
 
@@ -158,11 +139,8 @@ int storage_save_emergency_state(bool is_active)
     joya_is_in_emergency = is_active;
     ret = settings_save_one("joya/emergency", &joya_is_in_emergency, sizeof(joya_is_in_emergency));
     if(ret != 0) {
-        LOG_ERR("Error al guardar estado de emergencia en Flash. Codigo: %d", ret);
-    }
-
-    // (improvement): decide what to do if settings_save_one fails (e.g., retry, log error, etc.)
-    
+        // (improvement): decide what to do if settings_save_one fails (e.g., retry, log error, etc.)
+    }    
     
     return ret;
 }
@@ -173,19 +151,16 @@ int storage_factory_reset(void)
     
     ret = settings_delete("joya/app_id");
     if (ret != 0) {
-        LOG_ERR("Error al borrar app_id de Flash (err %d)", ret);
         return ret;
     }
 
     ret = settings_delete("joya/emergency");
     if (ret != 0) {
-        LOG_ERR("Error al borrar estado de emergencia de Flash (err %d)", ret);
         return ret;
     }
 
     memset(joya_app_id, 0, sizeof(joya_app_id));
     joya_is_in_emergency = false;
 
-    LOG_INF("Memoria Flash borrada (Factory Reset)");
     return 0;
 }
