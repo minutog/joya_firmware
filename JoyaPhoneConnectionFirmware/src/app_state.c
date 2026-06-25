@@ -9,7 +9,6 @@ uint8_t current_retry_index = 0;
 
 static struct k_work_delayable connection_timeout_work;
 static struct k_work_delayable emergency_retry_work;
-static struct k_work_delayable authentification_timeout_work;
 
 /** @brief Current application state */
 static volatile app_state_t current_state = STATE_UNPAIRED;
@@ -33,6 +32,9 @@ void increment_emergency_retry_index(void) {
 }
 
 /** @brief Reset the emergency retry index */
+/*
+ * Improvement: route emergency retry work through the FSM to avoid shared state between workqueue and process_event().
+ */
 void reset_emergency_retry_index(void) {
     current_retry_index = 0;
 }
@@ -101,13 +103,6 @@ static void connection_timeout_work_handler(struct k_work *work) {
     k_msgq_put(&event_queue, &ev, K_NO_WAIT);
 }
 
-/** @brief Work handler for authentification timeout 
- * This function is called when the authentification timeout work is executed. It adds a timeout event to the event queue.
-*/
-static void authentification_timeout_work_handler(struct k_work *work) {
-    event_type_t ev = EV_BLE_TIMEOUT;
-    k_msgq_put(&event_queue, &ev, K_NO_WAIT);
-}
 
 /**
  * PUBLIC API
@@ -133,7 +128,6 @@ int add_event(event_type_t event)
 void fsm_thread_loop(void) {
     k_work_init_delayable(&emergency_retry_work, emergency_retry_work_handler);
     k_work_init_delayable(&connection_timeout_work, connection_timeout_work_handler);
-    k_work_init_delayable(&authentification_timeout_work, authentification_timeout_work_handler);
 
     event_type_t event;
     while (1) {
@@ -160,11 +154,16 @@ static const char *event_to_str(event_type_t event)
     case EV_APP_STOP_EMERGENCY: return "EV_APP_STOP_EMERGENCY";
     case EV_APP_FOLLOW_ME: return "EV_APP_FOLLOW_ME";
     case EV_BLE_TIMEOUT: return "EV_BLE_TIMEOUT";
+    case EV_APP_FRIEND_EMERGENCY: return "EV_APP_FRIEND_EMERGENCY";
     default: return "UNKNOWN_EVENT";
     }
 }
 /********** */
 
+/*
+ * Button gestures are detected only after firmware initialization.
+ * A button press already active during boot is not considered a valid gesture.
+ */
 void process_event(event_type_t event) {
     // Global filter for emergency events
     LOG_INF("process_event: %s, state=%d, emergency=%d, alerts_active=%d, retry_idx=%d",
@@ -271,6 +270,7 @@ void process_event(event_type_t event) {
                 */
                 current_state = STATE_AUTHENTICATED;
                 emergency_restart_alerts();
+                haptics_play(HAPTICS_PATTERN_EMERGENCY_START);
 
                 LOG_INF("Emergency active after auth, alerts restarted");
                 return;
@@ -324,6 +324,12 @@ void process_event(event_type_t event) {
             break;
 
         case STATE_WAITING_NOTIFICATION_ENABLE:
+            /*
+            * Protocol contract: the app must enable notifications before sending
+            * APP_ID. Identifier events received in this state are intentionally not
+            * handled; the app must resend APP_ID after the firmware reaches
+            * STATE_SETUP_WAITING_IDENTIFIER.
+            */
             if (event == EV_BLE_NOTIFY_ENABLED) {
                 current_state = STATE_SETUP_WAITING_IDENTIFIER;
                 LOG_INF("FROM: WAITING NOTIFICATION ENABLE TO: STATE_SETUP_WAITING_IDENTIFIER\n");
@@ -345,12 +351,14 @@ void process_event(event_type_t event) {
                     // New APP_ID
                     if(save_received_app_id() == 0){
                         current_state = STATE_AUTHENTICATED;
+                        // It is safe to send because it is already authenticated
                         ble_send_event_secure(COMMAND_ACK_AUTH);
                         haptics_play_effect(HAPTICS_EFFECT_AUTH);
                         LOG_INF("APP_ID SAVED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_AUTHENTICATED\n");
                         add_event(EV_APP_AUTHENTICATED);
                         return;
                     } else {
+                        // In NACK case, it is not necessary to be authenticated
                         ble_send_event_secure(COMMAND_NACK_AUTH);
                         LOG_INF("APP_ID NOT SAVED. WAITING FOR NEW IDENTIFIER\n");
                     }
@@ -373,7 +381,6 @@ void process_event(event_type_t event) {
             } else if(event == EV_BLE_DISCONNECTED){
                 if(is_app_id_empty()){
                     current_state = STATE_UNPAIRED;
-                    current_state = STATE_UNPAIRED;
                     LOG_INF("TIMEOUT/DISCONNECTION/RESET WITHOUT CLAIMED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_UNPAIRED\n");
                 } else {
                     current_state = STATE_BONDED_DISCONNECTED;
@@ -384,12 +391,11 @@ void process_event(event_type_t event) {
             break;
 
         case STATE_AUTHENTICATED:
+            // On this state, the device is connected and authenticated with the app. It can send and receive events.
             if (event == EV_APP_FRIEND_EMERGENCY){
                 haptics_play(HAPTICS_PATTERN_FRIEND_EMERGENCY);
                 LOG_INF("FROM: STATE_AUTHENTICATED TO: STATE_AUTHENTICATED (friend emergency)\n");
-            }
-
-            if (event == EV_BLE_DISCONNECTED) {
+            } else if (event == EV_BLE_DISCONNECTED) {
                 current_state = STATE_BONDED_DISCONNECTED;
                 ble_start_reconnect_advertising();
                 LOG_INF("FROM: STATE_AUTHENTICATED TO: STATE_BONDED_DISCONNECTED\n");

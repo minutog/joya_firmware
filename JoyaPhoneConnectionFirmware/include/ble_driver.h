@@ -18,11 +18,6 @@
 #define BT_UUID_JOYA_RX_VAL         BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585345)
 #define BT_UUID_JOYA_RX_AUTH_VAL    BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585346)
 
-/**
- * @brief Check whether a BLE connection is active.
- * @return true if a BLE connection is active, false otherwise.
- */
-bool is_ble_connected(void);
 
 /**
  * @brief Initialize the Bluetooth stack.
@@ -35,6 +30,9 @@ int ble_driver_init(void);
  * This function checks if the device is connected before sending the event.
  * @param event_byte The 1-byte code to send.
  * @return 0 on success, or a negative error code on failure.
+ */
+ /**
+ * Note: only checks if the connection is active and notifications are enabled. It does not check if the app is authenticated. This responsability is delegated to the caller.
  */
 int ble_send_event_secure(uint8_t event_byte);
 
@@ -64,22 +62,5 @@ int ble_stop_advertising(void);
  */
 int ble_disconnect(void);
 
-/**
- * @brief Check whether BLE notifications are enabled.
- * @return true if notifications are enabled, false otherwise.
- */
-bool is_notify_enabled(void);
-
-/**
- * @brief Check whether the app session is authenticated.
- * @return true if the app session is authenticated, false otherwise.
- */
-bool is_authenticated(void);
-
-/**
- * @brief Set the app session authentication state.
- * @param auth_status true to mark the session authenticated, false otherwise.
- */
-void set_authenticated(bool auth_status);
 
 #endif // BLE_DRIVER_H

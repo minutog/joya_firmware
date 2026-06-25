@@ -24,7 +24,6 @@ static const struct bt_le_adv_param joya_adv_param = {
 /** @brief Current connection */
 static struct bt_conn *current_conn = NULL;
 static bool notify_enabled = false;
-static bool authenticated = false;
 
 static K_MUTEX_DEFINE(conn_mutex);
 
@@ -46,6 +45,7 @@ static void on_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value) {
 
 static ssize_t on_rx_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                            const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+                            
     return on_rx_write_handler(conn, attr, buf, len, offset, flags);
 }
 
@@ -90,7 +90,6 @@ static void on_disconnected(struct bt_conn *conn, uint8_t reason) {
     }
 
     notify_enabled = false;
-    authenticated = false;
     k_mutex_unlock(&conn_mutex);
 
     if(old_conn) {
@@ -107,6 +106,9 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
     .disconnected = on_disconnected,
 };
 
+/** @brief Get a reference to the current connection.
+ * @return A reference to the current connection, or NULL if not connected or notifications are not enabled.
+ */
 static struct bt_conn *get_current_conn_ref(void)
 {
 	struct bt_conn *conn = NULL;
@@ -159,38 +161,24 @@ static const struct bt_data ad[] = {
 };
 
 /**
- * @brief Sends a notification to the mobile app (do not use directly, use ble_send_event_secure instead).
+ * @brief Sends a notification to the mobile app (wrapper: ble_send_event_secure).
  * @param event_byte The 1-byte code to send.
  * @return 0 on success, or a negative error code on failure.
  */
-static int ble_send_notify(const uint8_t *data, uint16_t len)
-{
-	struct bt_conn *conn;
-	const struct bt_gatt_attr *tx_attr;
+static int ble_send_notify(struct bt_conn * conn, uint8_t event_byte){
+	const struct bt_gatt_attr *attr;
 	int err;
 
-	conn = get_current_conn_ref();
-	if (!conn) {
-		LOG_WRN("Notify skipped: no active connection or notifications disabled");
-		return -ENOTCONN;
+	attr = bt_gatt_find_by_uuid(joya_svc.attrs,
+				    joya_svc.attr_count,
+				    &joya_tx_uuid.uuid);
+	if (!attr) {
+		return -EINVAL;
 	}
 
-	tx_attr = bt_gatt_find_by_uuid(joya_svc.attrs,
-				       joya_svc.attr_count,
-				       &joya_tx_uuid.uuid);
-	if (!tx_attr) {
-		LOG_ERR("TX characteristic attribute not found");
-		bt_conn_unref(conn);
-		return -ENOENT;
-	}
+	err = bt_gatt_notify(conn, attr, &event_byte, sizeof(event_byte));
 
-	err = bt_gatt_notify(conn, tx_attr, data, len);
-
-	bt_conn_unref(conn);
-
-	if (err) {
-		LOG_WRN("Notify failed: %d", err);
-	}
+	LOG_INF("Notification sent: 0x%02X (Status: %d)", event_byte, err);
 
 	return err;
 }
@@ -270,24 +258,34 @@ int ble_stop_advertising(void) {
 
 
 int ble_send_event_secure(uint8_t event_byte) {
-    if (current_conn == NULL) {
-        LOG_WRN("BLE disconnected");
-        // Optional: reconnecting (improvement)
+    struct bt_conn *conn = get_current_conn_ref();
+    if (!conn) {
+        LOG_WRN("Cannot send event: no active connection or notifications not enabled");
         return -ENOTCONN;
     }
-    return ble_send_notify(event_byte);
+
+    int ret = ble_send_notify(conn, event_byte);
+    bt_conn_unref(conn);
+    return ret;
 }
 
-bool is_ble_connected(void) {
-    return current_conn != NULL;
-}
 
 int ble_disconnect(void) {
     int err = 0;
     int adv_err;
+    struct bt_conn *conn = NULL;
 
-    if (current_conn) {
-        err = bt_conn_disconnect(current_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+
+    if(current_conn) {
+        conn = bt_conn_ref(current_conn);
+    }
+    
+    k_mutex_unlock(&conn_mutex);
+
+    if (conn) {
+        err = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+        bt_conn_unref(conn);
 
         if (err) {
             LOG_ERR("Failed to disconnect: %d", err);
@@ -303,21 +301,12 @@ int ble_disconnect(void) {
     }
 
     adv_err = bt_le_adv_stop();
-	if (adv_err && adv_err != -EALREADY) {
-		LOG_WRN("Failed to stop advertising: %d", adv_err);
-	}
+    if (adv_err == -EALREADY) {
+        // Advertising was already stopped, which is fine
+        adv_err = 0;
+    } else if (adv_err) {
+        LOG_WRN("Failed to stop advertising: %d", adv_err);
+    }
 
     return err ? err : adv_err;
-}
-
-void set_authenticated(bool auth) {
-    authenticated = auth;
-}
-
-bool is_authenticated(void) {
-    return authenticated;
-}
-
-bool is_notify_enabled(void) {
-    return notify_enabled;
 }

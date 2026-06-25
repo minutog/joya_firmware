@@ -7,7 +7,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
 
-LOG_MODULE_REGISTER(button_mod, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(button_mod, LOG_LEVEL_NONE);
 
 static const struct gpio_dt_spec button =
 	GPIO_DT_SPEC_GET(DT_ALIAS(boton_emergencia), gpios);

@@ -143,9 +143,13 @@ int storage_save_emergency_state(bool is_active)
 	 */
     joya_is_in_emergency = is_active;
     ret = settings_save_one("joya/emergency", &joya_is_in_emergency, sizeof(joya_is_in_emergency));
-    // (to do): decide what to do if settings_save_one fails (e.g., retry, log error, etc.)
+    if(ret != 0) {
+        LOG_ERR("Error al guardar estado de emergencia en Flash. Codigo: %d", ret);
+    }
+
+    // (improvement): decide what to do if settings_save_one fails (e.g., retry, log error, etc.)
     
-    LOG_INF("Estado de emergencia guardado en Flash");
+    
     return ret;
 }
 

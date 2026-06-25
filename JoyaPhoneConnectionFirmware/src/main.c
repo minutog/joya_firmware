@@ -11,7 +11,6 @@ int main(void) {
     int ret = storage_init();
     if (ret != 0) {
         LOG_ERR("Error initializing storage: %d", ret);
-        return -1;
     }
     
     ret = ble_driver_init();
