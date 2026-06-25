@@ -40,7 +40,6 @@ ssize_t on_rx_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *att
     } else if (val == COMMAND_FRIEND_EMERGENCY) {
         ev = EV_APP_FRIEND_EMERGENCY; // Asegurate que este enum exista
         add_event(ev);
-        
     } else {
         LOG_WRN("Comando desconocido recibido: 0x%02X\n", val);
     }

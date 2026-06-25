@@ -4,15 +4,11 @@ LOG_MODULE_REGISTER(app_state_mod, LOG_LEVEL_INF);
 
 /** @brief Array of retry intervals for emergency events in milliseconds */
 const uint32_t EMERGENCY_RETRY_MS[] = {EMERGENCY_RETRY_INITIAL_MS, EMERGENCY_RETRY_FAST_MS, EMERGENCY_RETRY_MEDIUM_MS, EMERGENCY_RETRY_SLOW_MS, EMERGENCY_RETRY_VERY_SLOW_MS};
-
 /** @brief Current index for emergency retry intervals */
 uint8_t current_retry_index = 0;
 
-/** @brief Work structure for connection timeout */
 static struct k_work_delayable connection_timeout_work;
-/** @brief Work structure for emergency retry */
 static struct k_work_delayable emergency_retry_work;
-
 static struct k_work_delayable authentification_timeout_work;
 
 /** @brief Current application state */
@@ -97,18 +93,6 @@ static void emergency_retry_work_handler(struct k_work *work)
 }
 
 
-/** @brief Work handler for emergency retry 
- * This function is called when the emergency retry work is executed. It sends the emergency command to the phone and reschedules itself based on the current retry interval.
- * 
-*/
-/*
-static void emergency_retry_work_handler(struct k_work *work) {
-    ble_send_event_secure(COMMAND_EMERGENCY);
-    k_work_reschedule(&emergency_retry_work, K_MSEC(EMERGENCY_RETRY_MS[current_retry_index]));
-    increment_emergency_retry_index();
-}
-*/
-
 /** @brief Work handler for connection timeout 
  * This function is called when the connection timeout work is executed. It adds a timeout event to the event queue.
 */
@@ -147,10 +131,6 @@ void fsm_thread_loop(void) {
         k_msgq_get(&event_queue, &event, K_FOREVER);
         process_event(event);
     }
-}
-
-void scheduler_retry(void){
-    k_work_reschedule(&emergency_retry_work, K_MSEC(EMERGENCY_RETRY_MS[current_retry_index]));
 }
 
 /** FOR DEBUGGING */
@@ -228,17 +208,6 @@ void process_event(event_type_t event) {
             case EV_APP_STOP_EMERGENCY:
                 emergency_stop_alerts();
                 storage_save_emergency_state(false);
-                LOG_INF("Emergency stopped");
-                return;
-
-                /*
-                if (current_state != STATE_BONDED_DISCONNECTED &&
-                    current_state != STATE_UNPAIRED) {
-                    current_state = STATE_AUTHENTICATED;
-                } // only for be sure if there is a disconnection during the emergency
-                // (to do): review
-                */
-
                 LOG_INF("Emergency stopped");
                 return;
 
@@ -347,7 +316,7 @@ void process_event(event_type_t event) {
         case STATE_SETUP_WAITING_IDENTIFIER:
             if(event == EV_APP_IDENTIFIER_RECEIVED){
                 if(is_app_id_empty()){
-                    // Nuevo APP_ID
+                    // New APP_ID
                     if(save_received_app_id() == 0){
                         current_state = STATE_AUTHENTICATED;
                         ble_send_event_secure(COMMAND_ACK_AUTH);
@@ -360,7 +329,7 @@ void process_event(event_type_t event) {
                         LOG_INF("APP_ID NOT SAVED. WAITING FOR NEW IDENTIFIER\n");
                     }
                 } else {
-                    // APP_ID ya registrado
+                    // Already have an APP_ID
                     if(check_app_id(storage_get_app_id()) == 0){
                         current_state = STATE_AUTHENTICATED;
                         ble_send_event_secure(COMMAND_ACK_AUTH);
@@ -369,8 +338,7 @@ void process_event(event_type_t event) {
                         LOG_INF("APP_ID CHECKED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_AUTHENTICATED\n");
                         return;
                     } else {
-                        // current_state = STATE_BONDED_DISCONNECTED;
-                        // (to do) max retry attempts? or just wait for the next connection?
+                        // (improvement) max retry attempts? or just wait for the next connection?
                         LOG_INF("WRONG APP_ID. TRY AGAIN\n");
                         ble_send_event_secure(COMMAND_NACK_AUTH);
                         return;
@@ -379,8 +347,6 @@ void process_event(event_type_t event) {
             } else if(event == EV_BLE_DISCONNECTED){
                 if(is_app_id_empty()){
                     current_state = STATE_UNPAIRED;
-                    // ble_force_reset();
-                    // storage_factory_reset();
                     current_state = STATE_UNPAIRED;
                     LOG_INF("TIMEOUT/DISCONNECTION/RESET WITHOUT CLAIMED. FROM: STATE_SETUP_WAITING_IDENTIFIER TO STATE_UNPAIRED\n");
                 } else {
@@ -396,19 +362,22 @@ void process_event(event_type_t event) {
                 haptics_play(HAPTICS_PATTERN_FRIEND_EMERGENCY);
                 LOG_INF("FROM: STATE_AUTHENTICATED TO: STATE_AUTHENTICATED (friend emergency)\n");
             }
+
             if (event == EV_BLE_DISCONNECTED) {
                 current_state = STATE_BONDED_DISCONNECTED;
                 ble_start_reconnect_advertising();
                 LOG_INF("FROM: STATE_AUTHENTICATED TO: STATE_BONDED_DISCONNECTED\n");
+
             } else if (event == EV_BTN_1_PULSE) {
                 haptics_play(HAPTICS_PATTERN_ROUTINE_START);
                 ble_send_event_secure(COMMAND_ROUTINE);
                 LOG_INF("FROM: STATE_AUTHENTICATED TO: STATE_AUTHENTICATED (routine command sent)\n");
+
             } else if (event == EV_BTN_LONG_PRESS) {
-                // (to do): send routine end command to phone
                 haptics_play(HAPTICS_PATTERN_ROUTINE_CANCEL);
                 ble_send_event_secure(COMMAND_END_ROUTINE);
                 LOG_INF("FROM: STATE_AUTHENTICATED TO: STATE_AUTHENTICATED (routine end command sent)\n");
+
             }
             break;
 
@@ -420,14 +389,14 @@ void process_event(event_type_t event) {
             break;
 
         default:
-            // Handle unexpected state
+            // (for future use) Handle unexpected state
             break;
     }
 
     if (event == EV_BTN_FACTORY_RESET) {
         LOG_INF("FROM: %d TO: STATE_UNPAIRED\n", current_state);
         current_state = STATE_UNPAIRED;
-        ble_force_reset();
+        ble_disconnect();
         storage_factory_reset();
         haptics_play_effect(HAPTICS_EFFECT_RESET);
         return;

@@ -2,10 +2,6 @@
 
 LOG_MODULE_REGISTER(haptics, LOG_LEVEL_INF);
 
-/* ============================================================
- * Devicetree
- * ============================================================ */
-
 #define HAPTIC_NODE DT_PATH(zephyr_user)
 
 #if !DT_NODE_EXISTS(HAPTIC_NODE)
@@ -22,26 +18,6 @@ static const struct gpio_dt_spec haptic_en =
 static const struct device *haptic_i2c =
 	DEVICE_DT_GET(DT_NODELABEL(i2c0));
 
-/* ============================================================
- * DRV2605 registers
- * ============================================================ */
-
-#define DRV2605_I2C_ADDR_LOW			0x5A
-#define DRV2605_I2C_ADDR_HIGH			0x5B
-
-#define DRV2605_REG_STATUS				0x00
-#define DRV2605_REG_MODE				0x01
-#define DRV2605_REG_RTP_INPUT			0x02
-#define DRV2605_REG_LIBRARY				0x03
-#define DRV2605_REG_WAVESEQ1			0x04
-#define DRV2605_REG_WAVESEQ2			0x05
-#define DRV2605_REG_GO					0x0C
-
-#define DRV2605_MODE_INTERNAL_TRIGGER	0x00
-#define DRV2605_MODE_RTP				0x05
-
-#define HAPTIC_RTP_OFF					0
-#define HAPTIC_RTP_MAX					127
 
 /* ============================================================
  * Internal state
@@ -60,10 +36,6 @@ static size_t active_step_index;
 
 static void haptics_pattern_work_handler(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(haptics_pattern_work, haptics_pattern_work_handler);
-
-/* ============================================================
- * Haptic patterns
- * ============================================================ */
 
 static const struct haptic_step pattern_setup_mode[] = {
 	{ 80,  55 },
@@ -116,16 +88,6 @@ static const struct haptic_step pattern_friend_emergency[] = {
     { 180, 120 }, { 120, 0 },
     { 600, 127 }, { 400, 0 },
 };
-
-/*
-static const struct haptic_step pattern_diagnostic[] = {
-	{ 1000, HAPTIC_RTP_MAX },
-	{ 300,  HAPTIC_RTP_OFF },
-};*/
-
-/* ============================================================
- * Low-level DRV2605 helpers
- * ============================================================ */
 
 static int drv2605_write_reg(uint8_t reg, uint8_t value)
 {
@@ -201,10 +163,6 @@ static int drv2605_play_effect(uint8_t effect)
 	return 0;
 }
 
-/* ============================================================
- * Pattern helpers
- * ============================================================ */
-
 static const struct haptic_step *get_pattern_steps(enum haptics_pattern pattern,
 						   size_t *step_count)
 {
@@ -232,12 +190,6 @@ static const struct haptic_step *get_pattern_steps(enum haptics_pattern pattern,
 	case HAPTICS_PATTERN_FRIEND_EMERGENCY:
 		*step_count = ARRAY_SIZE(pattern_friend_emergency);
 		return pattern_friend_emergency;
-
-	/*
-	case HAPTICS_PATTERN_DIAGNOSTIC:
-		*step_count = ARRAY_SIZE(pattern_diagnostic);
-		return pattern_diagnostic;
-	*/
 
 	case HAPTICS_PATTERN_NONE:
 	default:
@@ -290,9 +242,9 @@ static void haptics_pattern_work_handler(struct k_work *work)
 	(void)k_work_reschedule(&haptics_pattern_work, K_MSEC(duration_ms));
 }
 
-/* ============================================================
- * Public API
- * ============================================================ */
+/**
+ * PUBLIC API
+ */
 
 int haptics_init(void)
 {
@@ -352,10 +304,7 @@ int haptics_init(void)
 		return err;
 	}
 
-	/*
-	 * Library 0x01 is the same value used in the old firmware.
-	 * Depending on the final motor type, ERM/LRA configuration may need tuning.
-	 */
+	// Note: 0x01 is the value used in the old firmware
 	err = drv2605_write_reg(DRV2605_REG_LIBRARY, 0x01);
 	if (err < 0) {
 		LOG_ERR("Failed to set DRV2605 library: %d", err);
@@ -376,7 +325,6 @@ void haptics_play_effect(enum haptics_effect effect)
         return;
     }
 
-    /* Si había un patrón reproduciéndose, lo cancelamos */
     (void)k_work_cancel_delayable(&haptics_pattern_work);
 
     active_pattern = HAPTICS_PATTERN_NONE;

@@ -15,7 +15,18 @@ extern struct k_msgq event_queue;
 #define BUTTON_ROUTINE_CANCEL_HOLD_MS 500
 #define BUTTON_FACTORY_RESET_HOLD_MS 15000
 
+/**
+ * @brief Initialize the button GPIO and interrupt handling.
+ * @return 0 on success, or a negative error code on failure.
+ */
 int button_init(void);
+
+/**
+ * @brief Handle button GPIO interrupts.
+ * @param dev GPIO device that generated the interrupt.
+ * @param cb GPIO callback data.
+ * @param pins GPIO pins that generated the interrupt.
+ */
 void button_isr_handler(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 
 #endif // BUTTON_H

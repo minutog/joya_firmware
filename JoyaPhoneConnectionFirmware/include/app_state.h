@@ -57,30 +57,28 @@ typedef enum {
     EV_APP_FRIEND_EMERGENCY
 } event_type_t;
 
-/** @brief Process an event
- * @param event The event to process
+/**
+ * @brief Process an application event.
+ * @param event The event to process.
  */
 void process_event(event_type_t event);
 
-/** @brief Main loop for the finite state machine
+/**
+ * @brief Run the finite state machine thread loop.
  * This function initializes the work structures and enters the main event loop.
  */
 void fsm_thread_loop(void);
 
-/** @brief Schedule a retry for the emergency command
- * This function reschedules the emergency retry work based on the current retry index.
- */
-void scheduler_retry(void);
-
-/** @brief Add an event to the event queue
- * @param event The event to add
- * @return 0 on success, -1 on failure
+/**
+ * @brief Add an event to the event queue.
+ * @param event The event to add.
+ * @return 0 on success, or a negative error code on failure.
  */
 int add_event(event_type_t event);
 
-/** @brief Get the current application state
- * @return The current application state
- * 
+/**
+ * @brief Get the current application state.
+ * @return The current application state.
  */
 app_state_t get_current_state(void);
 

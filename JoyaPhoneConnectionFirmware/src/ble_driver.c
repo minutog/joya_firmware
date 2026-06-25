@@ -27,15 +27,7 @@ static bool notify_enabled = false;
 static bool authenticated = false;
 
 /**
- * CALLBACKS
- */
-
-/**
- * @brief Callback for when the CCCD (Client Characteristic Configuration Descriptor) changes.
- * This is called when the client (phone) enables or disables notifications for the TX characteristic.
- * @param attr The GATT attribute that changed (the CCCD).
- * @param value The new value of the CCCD
- * 
+ * CALLBACKS (see app_comm.c)
  */
 
 static void on_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value) {
@@ -44,16 +36,6 @@ static void on_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value) {
     on_ccc_changed_handler(attr, value);
 }
 
-/** @brief Callback for when the RX characteristic is written to.
- * This is called when the client (phone) writes data to the RX characteristic.
- * @param conn The Bluetooth connection.
- * @param attr The GATT attribute that was written to.
- * @param buf The buffer containing the data written.
- * @param len The length of the data written.
- * @param offset The offset of the data written.
- * @param flags The flags for the write operation.
- * @return The number of bytes written or an error code.
- */
 static ssize_t on_rx_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                            const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
     return on_rx_write_handler(conn, attr, buf, len, offset, flags);
@@ -64,11 +46,7 @@ static ssize_t on_rx_auth_write(struct bt_conn *conn, const struct bt_gatt_attr 
     return on_rx_auth_write_handler(conn, attr, buf, len, offset, flags);
 }
 
-/** @brief Callback for when a Bluetooth connection is established.
- * This is called when the client (phone) connects to the device.
- * @param conn The Bluetooth connection.
- * @param err The error code (0 if no error).
- */
+
 static void on_connected(struct bt_conn *conn, uint8_t err) {
     if (err) {
         LOG_ERR("Connection error: %d", err);
@@ -80,11 +58,7 @@ static void on_connected(struct bt_conn *conn, uint8_t err) {
     on_connected_handler(conn, err);
 }
 
-/** @brief Callback for when a Bluetooth connection is lost.
- * This is called when the client (phone) disconnects from the device.
- * @param conn The Bluetooth connection.
- * @param reason The reason for the disconnection.
- */
+
 static void on_disconnected(struct bt_conn *conn, uint8_t reason) {
     LOG_INF("Phone disconnected (Reason: %d)", reason);
     if (current_conn) {
@@ -101,12 +75,12 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
     .disconnected = on_disconnected,
 };
 
+
 /**
  * GATT SERVICE DEFINITION
  */
 
-/** @brief Defines the GATT service for the Joya device.
- */
+
 BT_GATT_SERVICE_DEFINE(joya_svc,
     BT_GATT_PRIMARY_SERVICE(&joya_svc_uuid),
     
@@ -124,7 +98,7 @@ BT_GATT_SERVICE_DEFINE(joya_svc,
                            BT_GATT_PERM_WRITE,
                            NULL, on_rx_write, NULL),
 
-    // RX AUTH Characteristic UUID: supports Write and Write Without Response (to do: maybe add some security requirements)
+    // RX AUTH Characteristic UUID: supports Write and Write Without Response (improvement: maybe add some security requirements)
     BT_GATT_CHARACTERISTIC(&joya_rx_auth_uuid.uuid,
                            BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
                            BT_GATT_PERM_WRITE,
@@ -132,9 +106,9 @@ BT_GATT_SERVICE_DEFINE(joya_svc,
 );
 
 /** @brief Defines the advertising data for the Joya device.
+ * General Discoverable Mode and BR/EDR not supported (LE only) 
  */
 static const struct bt_data ad[] = {
-    // (to do): review
     BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 };
 
@@ -159,10 +133,10 @@ static int ble_send_notify(uint8_t event_byte) {
     return err;
 }
 
+
 /** 
  * PUBLIC API
  */
-
 
 int ble_driver_init(void) {
     int err = bt_enable(NULL);
@@ -174,24 +148,6 @@ int ble_driver_init(void) {
     LOG_INF("Bluetooth initialized successfully");
     return 0;
 }
-
-/*
-int ble_start_setup_advertising(void) {
-    // Change the device name to "Joya Setup" for advertising
-    int name_err = bt_set_name("Joya Setup");
-    if (name_err) {
-        LOG_WRN("Could not set dynamic name: %d", name_err);
-    }
-
-    int err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
-    if (err) {
-        LOG_ERR("Failed to start setup advertising. Error: %d", err);
-        return err;
-    }
-
-    LOG_INF("Setup advertising started successfully");
-    return 0;
-}*/
 
 int ble_start_setup_advertising(void)
 {
@@ -219,13 +175,6 @@ int ble_start_setup_advertising(void)
 	return 0;
 }
 
-/*
-int ble_start_reconnect_advertising(void) {
-    bt_set_name("Joya");
-    int err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
-    LOG_INF("Setup advertising started successfully");
-    return err;
-}*/
 int ble_start_reconnect_advertising(void)
 {
 	int err;
@@ -261,7 +210,7 @@ int ble_stop_advertising(void) {
 int ble_send_event_secure(uint8_t event_byte) {
     if (current_conn == NULL) {
         LOG_WRN("BLE disconnected");
-        // Optional: reconnecting (to do)
+        // Optional: reconnecting (improvement)
         return -ENOTCONN;
     }
     return ble_send_notify(event_byte);
@@ -271,23 +220,32 @@ bool is_ble_connected(void) {
     return current_conn != NULL;
 }
 
-void ble_force_reset(void) {
+int ble_disconnect(void) {
+    int err = 0;
+    int adv_err;
+
     if (current_conn) {
-        int err = bt_conn_disconnect(current_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+        err = bt_conn_disconnect(current_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+
         if (err) {
             LOG_ERR("Failed to disconnect: %d", err);
         } else {
-            LOG_INF("Disconnection initiated...");
+            LOG_INF("Disconnected");
         }
 
-        // Note: the stack will automatically trigger the on_disconnected callback 
-        // when the disconnection is complete, so that's where the 'current_conn' 
-        // pointer is actually cleaned up to NULL.
+        /*
+        * bt_conn_disconnect() only starts the disconnection procedure.
+        * The registered disconnected callback is called when the link is actually
+        * terminated; current_conn is released and cleared there.
+        */
     }
 
-    // Stop any advertising that might be running
-    bt_le_adv_stop();
-    LOG_INF("Radio silenced.");
+    adv_err = bt_le_adv_stop();
+	if (adv_err && adv_err != -EALREADY) {
+		LOG_WRN("Failed to stop advertising: %d", adv_err);
+	}
+
+    return err ? err : adv_err;
 }
 
 void set_authenticated(bool auth) {
