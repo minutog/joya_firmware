@@ -26,6 +26,8 @@
 
 9. ¿Qué pasa si la cola de eventos está llena?
 
+10. ¿Se necesitan intercambiar ACK por fuera de la recepción del app_id y la emergencia entre JOYA y el celular? (por ejemplo, para el START_ROUTINE)
+
 # Decisiones de diseño actuales
 
 - Si falla FLASH: sigue
