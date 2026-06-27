@@ -80,6 +80,9 @@ int check_app_id(const uint8_t *app_id) {
 
 int save_received_app_id(void){
     int ret = storage_save_app_id(received_app_id);
+    if (ret != 0) {
+        dbg_rtt_mark("Failed to save received APP_ID - continuing without saving\n");
+    }
     memset(received_app_id, 0, SIZE_APP_ID);
     return ret;
 }

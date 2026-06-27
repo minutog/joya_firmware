@@ -5,6 +5,7 @@
 #include "app_comm.h"
 #include "flash_memory.h"
 #include "haptics.h"
+#include "debug_rtt.h"
 
 #include <stdbool.h>
 #include <stdint.h>

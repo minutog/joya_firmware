@@ -70,6 +70,7 @@ static void emergency_restart_alerts(void)
         return;
     }
 
+    dbg_rtt_mark("Sending emergency event\n");
     ble_send_event_secure(COMMAND_EMERGENCY);
     emergency_schedule_next_retry();
 }
@@ -88,6 +89,7 @@ static void emergency_retry_work_handler(struct k_work *work)
         return;
     }
 
+    dbg_rtt_mark("Retrying emergency event\n");
     ble_send_event_secure(COMMAND_EMERGENCY);
     emergency_schedule_next_retry();
 }
@@ -133,16 +135,24 @@ void fsm_thread_loop(void) {
  * A button press already active during boot is not considered a valid gesture.
  */
 void process_event(event_type_t event) {
+    int ret;
     if (event == EV_BTN_EMERGENCY) {
-        storage_save_emergency_state(true);
+        dbg_rtt_mark("Emergency button pressed\n");
+        ret = storage_save_emergency_state(true);
+        if (ret == 1) {
+            dbg_rtt_mark("Failed to save emergency state in flash - continuing without saving\n");
+        }
+
         haptics_play(HAPTICS_PATTERN_EMERGENCY_START);
         // Note: haptics effect will be played even if the secure channel is not ready, as a warning to the user.
 
         if (current_state == STATE_AUTHENTICATED) {
+            dbg_rtt_mark("Sending emergency\n");
             emergency_restart_alerts();
             return;
         }
 
+        dbg_rtt_mark("Emergency button pressed but not authenticated - scheduling retry\n");
         k_work_cancel_delayable(&emergency_retry_work);
         reset_emergency_retry_index();
 
@@ -170,29 +180,40 @@ void process_event(event_type_t event) {
                 if (current_state != STATE_AUTHENTICATED) {
                     return;
                 }
+                dbg_rtt_mark("Follow me event received\n");
                 haptics_play(HAPTICS_PATTERN_FOLLOW_ME);
                 return;
             
             case EV_APP_ACK_EMERGENCY:
                 if (current_state != STATE_AUTHENTICATED) {
+                    dbg_rtt_mark("Acknowledgment received but not authenticated\n");
                     return;
                 }
+                dbg_rtt_mark("Acknowledged emergency event received\n");
                 emergency_stop_alerts();
                 return;
 
             case EV_APP_STOP_EMERGENCY:
                 if (current_state != STATE_AUTHENTICATED) {
+                    dbg_rtt_mark("Stop emergency received but not authenticated\n");
                     return;
                 }
+                dbg_rtt_mark("Stop emergency event received\n");
                 emergency_stop_alerts();
-                storage_save_emergency_state(false);
+                ret = storage_save_emergency_state(false);
+                if (ret == 1) {
+                    dbg_rtt_mark("Failed to save emergency state in flash - continuing without saving\n");
+                }
                 return;
 
             case EV_BLE_TIMEOUT:
+                dbg_rtt_mark("BLE timeout\n");
                 if (is_app_id_empty()) {
+                    dbg_rtt_mark("No APP_ID stored - entering setup mode (starting ADV)\n");
                     current_state = STATE_SETUP_MODE;
                     ble_start_setup_advertising();
                 } else {
+                    dbg_rtt_mark("APP_ID stored - entering bonded disconnected state (starting ADV)\n");
                     current_state = STATE_BONDED_DISCONNECTED;
                     ble_start_reconnect_advertising();
                 }
@@ -200,12 +221,15 @@ void process_event(event_type_t event) {
                 return;
 
             case EV_BLE_DISCONNECTED:
+                dbg_rtt_mark("BLE disconnected\n");
                 emergency_stop_alerts();
 
                 if (is_app_id_empty()) {
+                    dbg_rtt_mark("No APP_ID stored - entering setup mode (starting ADV)\n");
                     current_state = STATE_SETUP_MODE;
                     ble_start_setup_advertising();
                 } else {
+                    dbg_rtt_mark("APP_ID stored - entering bonded disconnected state (starting ADV)\n");
                     current_state = STATE_BONDED_DISCONNECTED;
                     ble_start_reconnect_advertising();
                 }
@@ -216,6 +240,7 @@ void process_event(event_type_t event) {
                 * Authenticated again while emergency is still active:
                 * restart the alert timing table and send immediately.
                 */
+                dbg_rtt_mark("App authenticated - restarting alerts\n");
                 current_state = STATE_AUTHENTICATED;
                 emergency_restart_alerts();
                 haptics_play(HAPTICS_PATTERN_EMERGENCY_START);
@@ -227,6 +252,7 @@ void process_event(event_type_t event) {
             case EV_BTN_LONG_PRESS:
             case EV_APP_FRIEND_EMERGENCY:
             case EV_BTN_FACTORY_RESET:
+                dbg_rtt_mark("Ignoring event while emergency is active\n");
                 /*
                 * Normal app actions are ignored while emergency is active.
                 */
@@ -241,6 +267,7 @@ void process_event(event_type_t event) {
     switch (current_state) {
         case STATE_UNPAIRED:
             if (event == EV_BTN_2_PULSE) {
+                dbg_rtt_mark("Entering setup mode (starting ADV)\n");
                 current_state = STATE_SETUP_MODE;
                 haptics_play(HAPTICS_PATTERN_SETUP_MODE);
                 ble_start_setup_advertising();
@@ -250,15 +277,18 @@ void process_event(event_type_t event) {
 
         case STATE_SETUP_MODE:
             if (event == EV_BLE_CONNECTED) {
+                dbg_rtt_mark("BLE connected - waiting for notification enable\n");
                 k_work_cancel_delayable(&connection_timeout_work);
                 current_state = STATE_WAITING_NOTIFICATION_ENABLE;
                 ble_stop_advertising();
 
             } else if (event == EV_BLE_TIMEOUT) {
+                dbg_rtt_mark("BLE setup timeout in setup mode - returning to unpaired state\n");
                 current_state = STATE_UNPAIRED;
                 ble_stop_advertising();
 
             } else if (event == EV_BLE_DISCONNECTED) {
+                dbg_rtt_mark("BLE disconnected in setup mode - returning to unpaired state\n");
                 k_work_cancel_delayable(&connection_timeout_work);
                 current_state = STATE_UNPAIRED;
                 ble_stop_advertising();
@@ -273,11 +303,14 @@ void process_event(event_type_t event) {
             * STATE_SETUP_WAITING_IDENTIFIER.
             */
             if (event == EV_BLE_NOTIFY_ENABLED) {
+                dbg_rtt_mark("Notifications enabled - waiting for APP_ID\n");
                 current_state = STATE_SETUP_WAITING_IDENTIFIER;
             } else if (event == EV_BLE_DISCONNECTED) {
                 if(is_app_id_empty()){
+                    dbg_rtt_mark("BLE disconnected in waiting notification enable state - returning to unpaired state\n");
                     current_state = STATE_UNPAIRED;
                 } else {
+                    dbg_rtt_mark("BLE disconnected in waiting notification enable state - returning to bonded disconnected state (starting ADV)\n");
                     current_state = STATE_BONDED_DISCONNECTED;
                     ble_start_reconnect_advertising();
                 }
@@ -286,37 +319,56 @@ void process_event(event_type_t event) {
 
         case STATE_SETUP_WAITING_IDENTIFIER:
             if(event == EV_APP_IDENTIFIER_RECEIVED){
+                dbg_rtt_mark("APP_ID received - checking validity\n");
                 if(is_app_id_empty()){
+                    dbg_rtt_mark("No APP_ID stored - saving new APP_ID\n");
                     // New APP_ID
-                    if(save_received_app_id() == 0){
-                        current_state = STATE_AUTHENTICATED;
-                        // It is safe to send because it is already authenticated
-                        ble_send_event_secure(COMMAND_ACK_AUTH);
-                        haptics_play_effect(HAPTICS_EFFECT_AUTH);
-                        add_event(EV_APP_AUTHENTICATED);
-                        return;
-                    } else {
-                        // In NACK case, it is not necessary to be authenticated
-                        ble_send_event_secure(COMMAND_NACK_AUTH);
+                    ret = save_received_app_id();
+                    if(ret == 1) {
+                        dbg_rtt_mark("Flash write failed while saving new APP_ID - continuing with RAM state\n");
                     }
+                    
+                    dbg_rtt_mark("New APP_ID saved - sending ACK_AUTH\n");
+                    current_state = STATE_AUTHENTICATED;
+                    // It is safe to send because it is already authenticated
+                    ret = ble_send_event_secure(COMMAND_ACK_AUTH);
+                    if(ret != 0){
+                        dbg_rtt_mark("Failed to send ACK_AUTH - continuing without sending\n");
+                    }
+
+                    haptics_play_effect(HAPTICS_EFFECT_AUTH);
+                    add_event(EV_APP_AUTHENTICATED);
+                    return;
+                    
                 } else {
+                    dbg_rtt_mark("APP_ID already stored - checking if it matches received APP_ID\n");
                     // Already have an APP_ID
                     if(check_app_id(storage_get_app_id()) == 0){
+                        dbg_rtt_mark("APP_ID matches stored APP_ID - sending ACK_AUTH\n");
                         current_state = STATE_AUTHENTICATED;
-                        ble_send_event_secure(COMMAND_ACK_AUTH);
+                        ret = ble_send_event_secure(COMMAND_ACK_AUTH);
+                        if(ret != 0){
+                            dbg_rtt_mark("Failed to send ACK_AUTH - continuing without sending\n");
+                        }
                         add_event(EV_APP_AUTHENTICATED);
                         haptics_play_effect(HAPTICS_EFFECT_AUTH);
                         return;
                     } else {
+                        dbg_rtt_mark("APP_ID does not match stored APP_ID - sending NACK_AUTH\n");
                         // (improvement) max retry attempts? or just wait for the next connection?
-                        ble_send_event_secure(COMMAND_NACK_AUTH);
+                        ret = ble_send_event_secure(COMMAND_NACK_AUTH);
+                        if(ret != 0){
+                            dbg_rtt_mark("Failed to send NACK_AUTH - continuing without sending\n");
+                        }
                         return;
                     }
                 }
             } else if(event == EV_BLE_DISCONNECTED){
                 if(is_app_id_empty()){
+                    dbg_rtt_mark("BLE disconnected while waiting for the new APP_ID - returning to unpaired state\n");
                     current_state = STATE_UNPAIRED;
                 } else {
+                    dbg_rtt_mark("BLE disconnected while waiting for the saved APP_ID - returning to bonded disconnected state (starting ADV)\n");
                     current_state = STATE_BONDED_DISCONNECTED;
                     ble_start_reconnect_advertising();
                 }
@@ -326,24 +378,35 @@ void process_event(event_type_t event) {
         case STATE_AUTHENTICATED:
             // On this state, the device is connected and authenticated with the app. It can send and receive events.
             if (event == EV_APP_FRIEND_EMERGENCY){
+                dbg_rtt_mark("Friend emergency event received\n");
                 haptics_play(HAPTICS_PATTERN_FRIEND_EMERGENCY);
             } else if (event == EV_BLE_DISCONNECTED) {
+                dbg_rtt_mark("BLE disconnected - returning to bonded disconnected state (starting ADV)\n");
                 current_state = STATE_BONDED_DISCONNECTED;
                 ble_start_reconnect_advertising();
 
             } else if (event == EV_BTN_1_PULSE) {
+                dbg_rtt_mark("Routine start button pressed\n");
                 haptics_play(HAPTICS_PATTERN_ROUTINE_START);
-                ble_send_event_secure(COMMAND_ROUTINE);
+                ret = ble_send_event_secure(COMMAND_ROUTINE);
+                if (ret != 0) {
+                    dbg_rtt_mark("Failed to send COMMAND_ROUTINE - continuing without sending\n");
+                }
 
             } else if (event == EV_BTN_LONG_PRESS) {
+                dbg_rtt_mark("Routine cancel button pressed\n");
                 haptics_play(HAPTICS_PATTERN_ROUTINE_CANCEL);
-                ble_send_event_secure(COMMAND_END_ROUTINE);
+                ret = ble_send_event_secure(COMMAND_END_ROUTINE);
+                if (ret != 0) {
+                    dbg_rtt_mark("Failed to send COMMAND_END_ROUTINE - continuing without sending\n");
+                }
 
             }
             break;
 
         case STATE_BONDED_DISCONNECTED:
             if (event == EV_BLE_CONNECTED) {
+                dbg_rtt_mark("BLE connected - waiting for notification enable\n");
                 current_state = STATE_WAITING_NOTIFICATION_ENABLE;
             } 
             break;
@@ -359,9 +422,14 @@ void process_event(event_type_t event) {
      * by local reset actions.
      */
     if (event == EV_BTN_FACTORY_RESET) {
+        dbg_rtt_mark("Factory reset button pressed - resetting device\n");
         current_state = STATE_UNPAIRED;
         ble_disconnect();
-        storage_factory_reset();
+        int ret = storage_factory_reset();
+        if(ret == 1) {
+            dbg_rtt_mark("Flash write failed while resetting flash storage - reseting only RAM state\n");
+        }
+
         haptics_play_effect(HAPTICS_EFFECT_RESET);
         return;
     }

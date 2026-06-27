@@ -1,8 +1,13 @@
 #include "flash_memory.h"
 
-bool app_id_loaded_from_flash = false;
 uint8_t joya_app_id[SIZE_APP_ID] = {0};
 static bool joya_is_in_emergency = false;
+
+static bool storage_persistent_available = false;
+
+bool storage_is_persistent_available(void) {
+    return storage_persistent_available;
+}
 
 const uint8_t* storage_get_app_id(void) {
     return joya_app_id;
@@ -37,8 +42,6 @@ static int app_settings_set(const char *name, size_t len, settings_read_cb read_
         if (rc != len) {
             return -EINVAL;
         }
-
-        app_id_loaded_from_flash = true;
 
         return 0;
     }
@@ -84,29 +87,49 @@ SETTINGS_STATIC_HANDLER_DEFINE(joya, "joya", NULL, app_settings_set, NULL, NULL)
 
 int storage_init(void)
 {
-    // Inicializar el subsistema
+    /*
+     * Safe RAM defaults.
+     * If flash/settings fails, the firmware can still run using RAM only.
+     */
+
+    storage_persistent_available = false;
+
+    memset(joya_app_id, 0, SIZE_APP_ID);
+    joya_is_in_emergency = false;
+
     int err = settings_subsys_init();
     if (err) {
+        /*
+         * Non-critical error: continue with RAM defaults.
+         */
         return err;
     }
 
-    // Esto dispara la lectura en Flash y llama a tu función 'app_settings_set'
     err = settings_load();
     if (err) {
+        /*
+         * Non-critical error: continue with RAM defaults.
+         */
         return err;
     }
     
-    if (!app_id_loaded_from_flash) {
-        memset(joya_app_id, 0, SIZE_APP_ID);
-    }
+    storage_persistent_available = true;
 
     return 0;
 }
 
 bool is_app_id_empty(void) {
-    static const uint8_t ceros[SIZE_APP_ID] = {0}; 
-    return (memcmp(joya_app_id, ceros, SIZE_APP_ID) == 0);
+    static const uint8_t zeros[SIZE_APP_ID] = {0}; 
+    return (memcmp(joya_app_id, zeros, SIZE_APP_ID) == 0);
 }
+
+/*
+ * Note: RAM state is updated first on purpose. Flash is only used to restore the 
+ * state after a reboot but if it fails, the RAM state is still valid and the 
+ * firmware can continue to operate.
+ * Returning 1 indicates a non-critical error (flash write failed) but the firmware 
+ * can continue to operate with RAM state.
+ */
 
 int storage_save_app_id(const uint8_t* new_app_id) {
     int ret;
@@ -114,10 +137,16 @@ int storage_save_app_id(const uint8_t* new_app_id) {
     memset(joya_app_id, 0, SIZE_APP_ID);
     memcpy(joya_app_id, new_app_id, SIZE_APP_ID);
 
+    if (!storage_persistent_available) {
+        return 1; // Return an error code indicating that flash is not available
+    }
+
     ret = settings_save_one("joya/app_id", joya_app_id, SIZE_APP_ID);
     if (ret != 0) {
-        memset(joya_app_id, 0, SIZE_APP_ID);
-        return ret;
+        /*
+         * Non-critical error: continue with RAM defaults.
+         */
+        return 1;
     }
 
     return 0;
@@ -125,42 +154,45 @@ int storage_save_app_id(const uint8_t* new_app_id) {
 
 int storage_save_emergency_state(bool is_active)
 {
-    int ret;
-    if(joya_is_in_emergency == is_active) {
-        // joya_is_in_emergency has not changed, no need to save to flash
-        return 0;
+    joya_is_in_emergency = is_active;
+
+    if (!storage_persistent_available) {
+        return 1; // Return an error code indicating that flash is not available
     }
 
-    /*
-	 * Note: RAM state is updated first on purpose. Emergency handling is an
-	 * operational state and must take effect immediately even if persistence
-	 * fails. Flash is only used to restore the state after a reboot.
-	 */
-    joya_is_in_emergency = is_active;
-    ret = settings_save_one("joya/emergency", &joya_is_in_emergency, sizeof(joya_is_in_emergency));
-    if(ret != 0) {
-        // (improvement): decide what to do if settings_save_one fails (e.g., retry, log error, etc.)
-    }    
+    int ret = settings_save_one("joya/emergency", &joya_is_in_emergency, sizeof(joya_is_in_emergency));
+    if (ret != 0) {
+        /*
+         * Non-critical error: continue with RAM defaults.
+         */
+        return 1;
+    }
     
-    return ret;
+    return 0;
 }
 
+/**
+ * Even if the flash write fails, we still clear the RAM state 
+ * to ensure that the device does not operate with stale data.
+ */
 int storage_factory_reset(void)
-{
-    int ret;
-    
-    ret = settings_delete("joya/app_id");
+{    
+    memset(joya_app_id, 0, sizeof(joya_app_id));
+    joya_is_in_emergency = false;
+
+    if(!storage_persistent_available) {
+        return 1; // Return an error code indicating that flash is not available
+    }
+
+    int ret = settings_delete("joya/app_id");
     if (ret != 0) {
-        return ret;
+        return 1;
     }
 
     ret = settings_delete("joya/emergency");
     if (ret != 0) {
-        return ret;
+        return 1;
     }
-
-    memset(joya_app_id, 0, sizeof(joya_app_id));
-    joya_is_in_emergency = false;
 
     return 0;
 }

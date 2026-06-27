@@ -25,3 +25,20 @@
 8. Si falla un haptic o un almacenamiento en flash ¿se reintenta?
 
 9. ¿Qué pasa si la cola de eventos está llena?
+
+# Decisiones de diseño actuales
+
+- Si falla FLASH: sigue
+- Si falla HAPTICS: sigue
+- Si falla el envío de un mensaje: sigue
+
+# Observaciones:
+
+- Para el modo debug, descomentar las siguientes líneas en ```prj.conf```
+
+    ``` #CONFIG_USE_SEGGER_RTT=y ```
+    ```    #CONFIG_SEGGER_RTT_MODE_NO_BLOCK_SKIP=y```
+
+- Para ver los logs, utilizar RTT. Por ejemplo, si se usa ```west```, ejecutar el comando ```west rtt```
+
+- Una vez se salga del modo debug, comentarlas y volver a grabar el programa
