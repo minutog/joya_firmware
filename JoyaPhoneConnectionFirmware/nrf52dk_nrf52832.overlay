@@ -9,20 +9,18 @@
  	* When running on the target hardware, replace the GPIO
  	* below with the pin connected to the emergency button.
  	*/
-	
+
 	joya_buttons {
 		compatible = "gpio-keys";
 
 		emergency_button: emergency_button {
-			// (JULI): CHEQUEAR GPIO0 13 (BOTON EMERGENCIA)
-			gpios = <&gpio0 13 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			gpios = <&gpio0 14 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 			label = "Joya emergency button";
 			zephyr,code = <INPUT_KEY_0>;
 		};
 	};
 
 	zephyr,user {
-		// (JULI): CHEQUEAR GPIO0 7 (BOTON ENABLE HAPTIC)
 		haptic_en_gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
 	};
 

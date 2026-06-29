@@ -1,6 +1,8 @@
 {
-    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
-    "C_Cpp.default.compilerPath": "/home/fran/zephyr-sdk-0.17.4/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc",
-    "C_Cpp.default.intelliSenseMode": "gcc-arm",
-    "C_Cpp.errorSquiggles": "enabled"
+  "files.associations": {
+    "*.overlay": "dts"
+  },
+  "devicetree.defaultZephyrBase": "/home/fran/work/joya_workspace/zephyr_base",
+  "devicetree.defaultBoard": "nrf52dk_nrf52832",
+  "devicetree.defaultBuildFolder": "${workspaceFolder}/build"
 }
