@@ -14,7 +14,7 @@
 		compatible = "gpio-keys";
 
 		emergency_button: emergency_button {
-			gpios = <&gpio0 14 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			gpios = <&gpio0 11 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 			label = "Joya emergency button";
 			zephyr,code = <INPUT_KEY_0>;
 		};
