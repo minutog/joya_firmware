@@ -1,4 +1,5 @@
 #include "app_state.h"
+#include <zephyr/sys/printk.h>
 
 /** @brief Array of retry intervals for emergency events in milliseconds */
 const uint32_t EMERGENCY_RETRY_MS[] = {EMERGENCY_RETRY_INITIAL_MS, EMERGENCY_RETRY_FAST_MS, EMERGENCY_RETRY_MEDIUM_MS, EMERGENCY_RETRY_SLOW_MS, EMERGENCY_RETRY_VERY_SLOW_MS};
@@ -17,6 +18,43 @@ K_MSGQ_DEFINE(event_queue, sizeof(event_type_t), 20, 4);
 K_THREAD_DEFINE(fsm_thread_id, 4098, fsm_thread_loop, NULL, NULL, NULL, 5, 0, 0);
 
 static bool emergency_alerts_active = false;
+
+static const char *state_name(app_state_t state)
+{
+    switch (state) {
+    case STATE_UNPAIRED: return "UNPAIRED";
+    case STATE_SETUP_MODE: return "SETUP_MODE";
+    case STATE_SETUP_WAITING_IDENTIFIER: return "SETUP_WAITING_IDENTIFIER";
+    case STATE_SETUP_WAITING_NEW_IDENTIFIER: return "SETUP_WAITING_NEW_IDENTIFIER";
+    case STATE_WAITING_NOTIFICATION_ENABLE: return "WAITING_NOTIFICATION_ENABLE";
+    case STATE_BONDED_DISCONNECTED: return "BONDED_DISCONNECTED";
+    case STATE_AUTHENTICATED: return "AUTHENTICATED";
+    case STATE_EMERGENCY: return "EMERGENCY";
+    default: return "UNKNOWN";
+    }
+}
+
+static const char *event_name(event_type_t event)
+{
+    switch (event) {
+    case EV_BTN_1_PULSE: return "BTN_1_PULSE";
+    case EV_BTN_2_PULSE: return "BTN_2_PULSE";
+    case EV_BTN_LONG_PRESS: return "BTN_LONG_PRESS";
+    case EV_BTN_EMERGENCY: return "BTN_EMERGENCY";
+    case EV_BTN_FACTORY_RESET: return "BTN_FACTORY_RESET";
+    case EV_APP_IDENTIFIER_RECEIVED: return "APP_IDENTIFIER_RECEIVED";
+    case EV_BLE_CONNECTED: return "BLE_CONNECTED";
+    case EV_BLE_DISCONNECTED: return "BLE_DISCONNECTED";
+    case EV_BLE_TIMEOUT: return "BLE_TIMEOUT";
+    case EV_BLE_NOTIFY_ENABLED: return "BLE_NOTIFY_ENABLED";
+    case EV_APP_AUTHENTICATED: return "APP_AUTHENTICATED";
+    case EV_APP_STOP_EMERGENCY: return "APP_STOP_EMERGENCY";
+    case EV_APP_FOLLOW_ME: return "APP_FOLLOW_ME";
+    case EV_APP_ACK_EMERGENCY: return "APP_ACK_EMERGENCY";
+    case EV_APP_FRIEND_EMERGENCY: return "APP_FRIEND_EMERGENCY";
+    default: return "UNKNOWN";
+    }
+}
 
 /**
  * PRIVATE FUNCTIONS
@@ -53,6 +91,7 @@ static void emergency_schedule_next_retry(void)
 {
     uint8_t idx = current_retry_index;
 
+    printk("Emergency retry scheduled in %u ms\n", EMERGENCY_RETRY_MS[idx]);
     k_work_reschedule(&emergency_retry_work,
                       K_MSEC(EMERGENCY_RETRY_MS[idx]));
 
@@ -67,9 +106,11 @@ static void emergency_restart_alerts(void)
     reset_emergency_retry_index();
 
     if (current_state != STATE_AUTHENTICATED) {
+        printk("Emergency alerts active, waiting for authentication\n");
         return;
     }
 
+    printk("Emergency alert notify now\n");
     ble_send_event_secure(COMMAND_EMERGENCY);
     emergency_schedule_next_retry();
 }
@@ -114,12 +155,14 @@ app_state_t get_current_state(void) {
 int add_event(event_type_t event)
 {
 	int err = k_msgq_put(&event_queue, &event, K_NO_WAIT);
+    printk("Queue event: %s ret=%d\n", event_name(event), err);
 	return err;
 }
 
 void fsm_thread_loop(void) {
     k_work_init_delayable(&emergency_retry_work, emergency_retry_work_handler);
     k_work_init_delayable(&connection_timeout_work, connection_timeout_work_handler);
+    printk("FSM thread started\n");
 
     event_type_t event;
     while (1) {
@@ -128,11 +171,33 @@ void fsm_thread_loop(void) {
     }
 }
 
+void app_state_start(void)
+{
+    int err;
+
+    if (is_app_id_empty()) {
+        current_state = STATE_UNPAIRED;
+        printk("Initial state: %s. Not advertising yet; double click button to advertise as Joya Setup.\n",
+               state_name(current_state));
+        return;
+    }
+
+    current_state = STATE_BONDED_DISCONNECTED;
+    err = ble_start_reconnect_advertising();
+    printk("Initial state: %s. Advertising as Joya ret=%d emergency=%d\n",
+           state_name(current_state), err, is_in_emergency());
+}
+
 /*
  * Button gestures are detected only after firmware initialization.
  * A button press already active during boot is not considered a valid gesture.
  */
 void process_event(event_type_t event) {
+    app_state_t previous_state = current_state;
+    printk("FSM event: %s in state %s emergency=%d app_id_empty=%d\n",
+           event_name(event), state_name(current_state),
+           is_in_emergency(), is_app_id_empty());
+
     if (event == EV_BTN_EMERGENCY) {
         storage_save_emergency_state(true);
         haptics_play(HAPTICS_PATTERN_EMERGENCY_START);
@@ -363,6 +428,13 @@ void process_event(event_type_t event) {
         ble_disconnect();
         storage_factory_reset();
         haptics_play_effect(HAPTICS_EFFECT_RESET);
+        printk("FSM transition: %s -> %s on %s\n",
+               state_name(previous_state), state_name(current_state), event_name(event));
         return;
+    }
+
+    if (previous_state != current_state) {
+        printk("FSM transition: %s -> %s on %s\n",
+               state_name(previous_state), state_name(current_state), event_name(event));
     }
 }

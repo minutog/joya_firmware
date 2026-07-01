@@ -1,4 +1,5 @@
 #include "ble_driver.h"
+#include <zephyr/sys/printk.h>
 
 #define JOYA_ADV_NAME_SETUP      "Joya Setup"
 #define JOYA_ADV_NAME_RECONNECT  "Joya"
@@ -35,31 +36,40 @@ static void on_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value) {
     k_mutex_lock(&conn_mutex, K_FOREVER);
     notify_enabled = enabled;
     k_mutex_unlock(&conn_mutex);
+
+    printk("BLE CCC changed: notify_enabled=%d raw=0x%04x\n", enabled, value);
         
     on_ccc_changed_handler(attr, value);
 }
 
 static ssize_t on_rx_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                            const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+    const uint8_t *bytes = buf;
+    printk("BLE RX write: len=%u offset=%u first=0x%02x\n",
+           len, offset, len > 0 ? bytes[0] : 0);
                             
     return on_rx_write_handler(conn, attr, buf, len, offset, flags);
 }
 
 static ssize_t on_rx_auth_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                 const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+    printk("BLE RX AUTH write: len=%u offset=%u\n", len, offset);
     return on_rx_auth_write_handler(conn, attr, buf, len, offset, flags);
 }
 
 
 static void on_connected(struct bt_conn *conn, uint8_t err) {
     if (err) {
-        // (improvement): decide what to do if connection fails (e.g., retry, log error, etc.)
+        printk("BLE connection failed: err=%u\n", err);
         return;
     }
+
+    printk("BLE connected\n");
 
     k_mutex_lock(&conn_mutex, K_FOREVER);
     if(current_conn){
         k_mutex_unlock(&conn_mutex);
+        printk("BLE rejecting extra connection\n");
         bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
         return;
     }
@@ -90,6 +100,7 @@ static void on_disconnected(struct bt_conn *conn, uint8_t reason) {
         bt_conn_unref(old_conn);
     }
 
+    printk("BLE disconnected: reason=0x%02x\n", reason);
 
     on_disconnected_handler(conn, reason);
 }
@@ -182,8 +193,11 @@ static int ble_send_notify(struct bt_conn * conn, uint8_t event_byte){
 int ble_driver_init(void) {
     int err = bt_enable(NULL);
     if (err) {
+        printk("bt_enable failed: %d\n", err);
         return err;
     }
+
+    printk("bt_enable OK\n");
     
     return 0;
 }
@@ -194,19 +208,22 @@ int ble_start_setup_advertising(void)
 
 	err = bt_le_adv_stop();
 	if (err < 0 && err != -EALREADY) {
-		// (improvement): decide what to do if stopping advertising fails (e.g., retry, log error, etc.)
+		printk("Stopping advertising before setup failed: %d\n", err);
 	}
 
 	err = bt_set_name(JOYA_ADV_NAME_SETUP);
 	if (err < 0) {
+		printk("bt_set_name(%s) failed: %d\n", JOYA_ADV_NAME_SETUP, err);
 		return err;
 	}
 
 	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err < 0) {
+		printk("Advertising start failed: name=%s err=%d\n", JOYA_ADV_NAME_SETUP, err);
 		return err;
 	}
 
+	printk("Advertising started: name=%s\n", JOYA_ADV_NAME_SETUP);
 
 	return 0;
 }
@@ -217,36 +234,43 @@ int ble_start_reconnect_advertising(void)
 
 	err = bt_le_adv_stop();
 	if (err < 0 && err != -EALREADY) {
-		// (improvement): decide what to do if stopping advertising fails (e.g., retry, log error, etc.)
+		printk("Stopping advertising before reconnect failed: %d\n", err);
 	}
 
 	err = bt_set_name(JOYA_ADV_NAME_RECONNECT);
 	if (err < 0) {
+		printk("bt_set_name(%s) failed: %d\n", JOYA_ADV_NAME_RECONNECT, err);
 		return err;
 	}
 
 	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err < 0) {
+		printk("Advertising start failed: name=%s err=%d\n", JOYA_ADV_NAME_RECONNECT, err);
 		return err;
 	}
 
+	printk("Advertising started: name=%s\n", JOYA_ADV_NAME_RECONNECT);
 
 	return 0;
 }
 
 
 int ble_stop_advertising(void) {
-    return bt_le_adv_stop();
+    int err = bt_le_adv_stop();
+    printk("Advertising stop requested: %d\n", err);
+    return err;
 }
 
 
 int ble_send_event_secure(uint8_t event_byte) {
     struct bt_conn *conn = get_current_conn_ref();
     if (!conn) {
+        printk("BLE notify skipped: no connected/notifying central event=0x%02x\n", event_byte);
         return -ENOTCONN;
     }
 
     int ret = ble_send_notify(conn, event_byte);
+    printk("BLE notify event=0x%02x ret=%d\n", event_byte, ret);
     bt_conn_unref(conn);
     return ret;
 }
@@ -270,7 +294,7 @@ int ble_disconnect(void) {
         bt_conn_unref(conn);
 
         if (err) {
-            // (improvement): decide what to do if disconnection fails (e.g., retry, log error, etc.)
+            printk("BLE disconnect failed: %d\n", err);
         }
 
         /*
@@ -285,8 +309,9 @@ int ble_disconnect(void) {
         // Advertising was already stopped, which is fine
         adv_err = 0;
     } else if (adv_err) {
-        // (improvement): decide what to do if stopping advertising fails (e.g., retry, log error, etc.)
+        printk("Advertising stop during disconnect failed: %d\n", adv_err);
     }
 
+    printk("BLE disconnect requested: conn_err=%d adv_err=%d\n", err, adv_err);
     return err ? err : adv_err;
 }

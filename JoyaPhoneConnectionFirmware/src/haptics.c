@@ -1,4 +1,5 @@
 #include "haptics.h"
+#include <zephyr/sys/printk.h>
 
 #define HAPTIC_NODE DT_PATH(zephyr_user)
 
@@ -248,15 +249,18 @@ int haptics_init(void)
 	}
 
 	if (!device_is_ready(haptic_i2c)) {
+		printk("Haptics I2C device not ready\n");
 		return -ENODEV;
 	}
 
 	if (!gpio_is_ready_dt(&haptic_en)) {
+		printk("Haptic EN GPIO not ready\n");
 		return -ENODEV;
 	}
 
 	err = gpio_pin_configure_dt(&haptic_en, GPIO_OUTPUT_ACTIVE);
 	if (err < 0) {
+		printk("Haptic EN configure failed: %d\n", err);
 		return err;
 	}
 
@@ -264,7 +268,7 @@ int haptics_init(void)
 
 	err = i2c_recover_bus(haptic_i2c);
 	if (err < 0 && err != -ENOSYS) {
-		// (improvement): decide what to do if I2C bus recovery fails (e.g., retry, log error, etc.)
+		printk("Haptic I2C recover failed: %d\n", err);
 	}
 
 	drv2605_addr = DRV2605_I2C_ADDR_LOW;
@@ -277,23 +281,29 @@ int haptics_init(void)
 
 	if (err < 0) {
 		(void)gpio_pin_set_dt(&haptic_en, 0);
+		printk("DRV2605 not detected at 0x%02x/0x%02x\n",
+		       DRV2605_I2C_ADDR_LOW, DRV2605_I2C_ADDR_HIGH);
 		return -ENODEV;
 	}
 
 	(void)drv2605_read_reg(DRV2605_REG_STATUS, &status);
+	printk("DRV2605 detected at 0x%02x status=0x%02x\n", drv2605_addr, status);
 
 	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
 	if (err < 0) {
+		printk("DRV2605 mode write failed: %d\n", err);
 		return err;
 	}
 
 	// Note: 0x01 is the value used in the old firmware
 	err = drv2605_write_reg(DRV2605_REG_LIBRARY, 0x01);
 	if (err < 0) {
+		printk("DRV2605 library write failed: %d\n", err);
 		return err;
 	}
 
 	haptics_ready = true;
+	printk("Haptics initialized\n");
 
 	return 0;
 }

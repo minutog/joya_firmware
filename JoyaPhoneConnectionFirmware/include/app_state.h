@@ -74,6 +74,11 @@ void fsm_thread_loop(void);
 int add_event(event_type_t event);
 
 /**
+ * @brief Start the initial app state after storage, BLE, button, and haptics initialization.
+ */
+void app_state_start(void);
+
+/**
  * @brief Get the current application state.
  * @return The current application state.
  */
