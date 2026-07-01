@@ -60,7 +60,7 @@ Emergency has priority over everything else.
 
 - Hold button for `15s`.
 - Joya clears `claimed` and `app_id`.
-- This physical reset also works while emergency is active, so a stale persisted
-  emergency cannot block re-pairing recovery.
+- This physical reset is ignored while emergency is active; the app must first
+  send `STOP_EMERGENCY`.
 - Joya disconnects from the phone.
 - Joya waits for a new double click to open setup again.

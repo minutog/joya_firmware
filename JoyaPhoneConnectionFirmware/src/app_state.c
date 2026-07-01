@@ -199,24 +199,6 @@ void process_event(event_type_t event) {
            event_name(event), state_name(current_state),
            is_in_emergency(), is_app_id_empty());
 
-    /*
-     * Physical pairing reset is the recovery path if the bracelet has a stale
-     * APP_ID or a persisted emergency state. It must work even while emergency
-     * is active; otherwise a mismatched app can never authenticate to clear it.
-     */
-    if (event == EV_BTN_FACTORY_RESET) {
-        identifier_pending = false;
-        emergency_stop_alerts();
-        k_work_cancel_delayable(&connection_timeout_work);
-        current_state = STATE_UNPAIRED;
-        ble_disconnect();
-        storage_factory_reset();
-        haptics_play_effect(HAPTICS_EFFECT_RESET);
-        printk("FSM transition: %s -> %s on %s\n",
-               state_name(previous_state), state_name(current_state), event_name(event));
-        return;
-    }
-
     if (event == EV_BTN_EMERGENCY) {
         storage_save_emergency_state(true);
         haptics_play(HAPTICS_PATTERN_EMERGENCY_START);
@@ -309,6 +291,7 @@ void process_event(event_type_t event) {
             case EV_BTN_1_PULSE:
             case EV_BTN_2_PULSE:
             case EV_BTN_LONG_PRESS:
+            case EV_BTN_FACTORY_RESET:
             case EV_APP_FRIEND_EMERGENCY:
                 /*
                 * Normal app actions are ignored while emergency is active.
@@ -456,6 +439,22 @@ void process_event(event_type_t event) {
         default:
             // (for future use) Handle unexpected state
             break;
+    }
+
+    /*
+     * Factory reset is intentionally ignored while emergency is active. The app
+     * must first send STOP_EMERGENCY (0x42) so the alert is not interrupted by a
+     * local reset gesture.
+     */
+    if (event == EV_BTN_FACTORY_RESET) {
+        identifier_pending = false;
+        current_state = STATE_UNPAIRED;
+        ble_disconnect();
+        storage_factory_reset();
+        haptics_play_effect(HAPTICS_EFFECT_RESET);
+        printk("FSM transition: %s -> %s on %s\n",
+               state_name(previous_state), state_name(current_state), event_name(event));
+        return;
     }
 
     if (previous_state != current_state) {
