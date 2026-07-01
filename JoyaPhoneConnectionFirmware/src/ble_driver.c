@@ -26,6 +26,23 @@ static bool notify_enabled = false;
 
 static K_MUTEX_DEFINE(conn_mutex);
 
+static const char *lfclk_source_name(void)
+{
+#if defined(CONFIG_CLOCK_CONTROL_NRF_K32SRC_RC)
+	return "RC";
+#elif defined(CONFIG_CLOCK_CONTROL_NRF_K32SRC_XTAL)
+	return "XTAL";
+#elif defined(CONFIG_CLOCK_CONTROL_NRF_K32SRC_SYNTH)
+	return "SYNTH";
+#elif defined(CONFIG_CLOCK_CONTROL_NRF_K32SRC_EXT_LOW_SWING)
+	return "EXT_LOW_SWING";
+#elif defined(CONFIG_CLOCK_CONTROL_NRF_K32SRC_EXT_FULL_SWING)
+	return "EXT_FULL_SWING";
+#else
+	return "UNKNOWN";
+#endif
+}
+
 /**
  * CALLBACKS (see app_comm.c)
  */
@@ -195,6 +212,9 @@ static int ble_send_notify(struct bt_conn * conn, uint8_t event_byte){
  */
 
 int ble_driver_init(void) {
+    printk("BLE clock config: LFCLK=%s accuracy=%dppm\n",
+           lfclk_source_name(), CONFIG_CLOCK_CONTROL_NRF_ACCURACY);
+
     int err = bt_enable(NULL);
     if (err) {
         printk("bt_enable failed: %d\n", err);
