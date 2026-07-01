@@ -324,9 +324,14 @@ void process_event(event_type_t event) {
                 ble_stop_advertising();
 
             } else if (event == EV_BLE_DISCONNECTED) {
-                k_work_cancel_delayable(&connection_timeout_work);
-                current_state = STATE_UNPAIRED;
-                ble_stop_advertising();
+                if (is_app_id_empty()) {
+                    current_state = STATE_SETUP_MODE;
+                    ble_start_setup_advertising();
+                    k_work_reschedule(&connection_timeout_work, K_MSEC(BLE_SETUP_TIMEOUT_MS));
+                } else {
+                    current_state = STATE_BONDED_DISCONNECTED;
+                    ble_start_reconnect_advertising();
+                }
             }
             break;
 
@@ -341,7 +346,9 @@ void process_event(event_type_t event) {
                 current_state = STATE_SETUP_WAITING_IDENTIFIER;
             } else if (event == EV_BLE_DISCONNECTED) {
                 if(is_app_id_empty()){
-                    current_state = STATE_UNPAIRED;
+                    current_state = STATE_SETUP_MODE;
+                    ble_start_setup_advertising();
+                    k_work_reschedule(&connection_timeout_work, K_MSEC(BLE_SETUP_TIMEOUT_MS));
                 } else {
                     current_state = STATE_BONDED_DISCONNECTED;
                     ble_start_reconnect_advertising();
@@ -380,7 +387,9 @@ void process_event(event_type_t event) {
                 }
             } else if(event == EV_BLE_DISCONNECTED){
                 if(is_app_id_empty()){
-                    current_state = STATE_UNPAIRED;
+                    current_state = STATE_SETUP_MODE;
+                    ble_start_setup_advertising();
+                    k_work_reschedule(&connection_timeout_work, K_MSEC(BLE_SETUP_TIMEOUT_MS));
                 } else {
                     current_state = STATE_BONDED_DISCONNECTED;
                     ble_start_reconnect_advertising();

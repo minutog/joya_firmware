@@ -164,6 +164,10 @@ static const struct bt_data ad[] = {
     BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 };
 
+static const struct bt_data sd[] = {
+    BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_JOYA_SERVICE_VAL),
+};
+
 /**
  * @brief Sends a notification to the mobile app (wrapper: ble_send_event_secure).
  * @param event_byte The 1-byte code to send.
@@ -217,7 +221,7 @@ int ble_start_setup_advertising(void)
 		return err;
 	}
 
-	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
+	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err < 0) {
 		printk("Advertising start failed: name=%s err=%d\n", JOYA_ADV_NAME_SETUP, err);
 		return err;
@@ -243,7 +247,7 @@ int ble_start_reconnect_advertising(void)
 		return err;
 	}
 
-	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
+	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err < 0) {
 		printk("Advertising start failed: name=%s err=%d\n", JOYA_ADV_NAME_RECONNECT, err);
 		return err;

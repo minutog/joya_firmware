@@ -14,15 +14,18 @@ static struct gpio_callback button_cb_data;
 
 static struct k_work_delayable debounce_work;
 static struct k_work_delayable click_window_work;
+static struct k_work_delayable factory_reset_hold_work;
 
 static void debounce_work_handler(struct k_work *work);
 static void click_window_work_handler(struct k_work *work);
+static void factory_reset_hold_work_handler(struct k_work *work);
 
 static uint32_t press_start_ms;
 static atomic_t pulse_count;
 
 static bool last_stable_pressed = false;
 static bool press_active = false;
+static bool factory_reset_triggered = false;
 
 static void send_button_event(event_type_t event)
 {
@@ -65,11 +68,23 @@ static void debounce_work_handler(struct k_work *work)
 	if (pressed) {
 		press_start_ms = now_ms;
 		press_active = true;
+		factory_reset_triggered = false;
+		(void)k_work_reschedule(&factory_reset_hold_work,
+				 K_MSEC(BUTTON_FACTORY_RESET_HOLD_MS));
 
 		if (atomic_get(&pulse_count) > 0) {
 			(void)k_work_cancel_delayable(&click_window_work);
 		}
 
+		return;
+	}
+
+	(void)k_work_cancel_delayable(&factory_reset_hold_work);
+
+	if (factory_reset_triggered) {
+		printk("Button factory reset hold released\n");
+		factory_reset_triggered = false;
+		press_active = false;
 		return;
 	}
 
@@ -124,6 +139,25 @@ static void click_window_work_handler(struct k_work *work)
 	}
 }
 
+static void factory_reset_hold_work_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	int pressed_raw = gpio_pin_get_dt(&button);
+	if (pressed_raw <= 0) {
+		return;
+	}
+
+	factory_reset_triggered = true;
+	press_active = false;
+	atomic_set(&pulse_count, 0);
+	(void)k_work_cancel_delayable(&click_window_work);
+
+	printk("Button gesture: factory reset hold (%u ms)\n",
+	       BUTTON_FACTORY_RESET_HOLD_MS);
+	send_button_event(EV_BTN_FACTORY_RESET);
+}
+
 int button_init(void)
 {
 	int ret;
@@ -153,6 +187,7 @@ int button_init(void)
 
 	k_work_init_delayable(&debounce_work, debounce_work_handler);
 	k_work_init_delayable(&click_window_work, click_window_work_handler);
+	k_work_init_delayable(&factory_reset_hold_work, factory_reset_hold_work_handler);
 
 	gpio_init_callback(&button_cb_data,
 			   button_isr_handler,
