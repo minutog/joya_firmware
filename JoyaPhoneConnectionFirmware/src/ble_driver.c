@@ -11,14 +11,11 @@ static struct bt_uuid_128 joya_tx_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_TX_VAL);
 static struct bt_uuid_128 joya_rx_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_RX_VAL);
 static struct bt_uuid_128 joya_rx_auth_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_RX_AUTH_VAL);
 
-static const struct bt_le_adv_param joya_adv_param = {
-	.options = BT_LE_ADV_OPT_CONNECTABLE |
-		   BT_LE_ADV_OPT_ONE_TIME |
-		   BT_LE_ADV_OPT_USE_NAME,
-	.interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
-	.interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
-	.peer = NULL,
-};
+static const struct bt_le_adv_param joya_adv_param =
+	BT_LE_ADV_PARAM_INIT(BT_LE_ADV_OPT_CONNECTABLE,
+			     BT_GAP_ADV_FAST_INT_MIN_2,
+			     BT_GAP_ADV_FAST_INT_MAX_2,
+			     NULL);
 
 /** @brief Current connection */
 static struct bt_conn *current_conn = NULL;
@@ -177,8 +174,14 @@ BT_GATT_SERVICE_DEFINE(joya_svc,
 /** @brief Defines the advertising data for the Joya device.
  * General Discoverable Mode and BR/EDR not supported (LE only) 
  */
-static const struct bt_data ad[] = {
+static const struct bt_data ad_setup[] = {
     BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+    BT_DATA(BT_DATA_NAME_COMPLETE, JOYA_ADV_NAME_SETUP, sizeof(JOYA_ADV_NAME_SETUP) - 1),
+};
+
+static const struct bt_data ad_reconnect[] = {
+    BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+    BT_DATA(BT_DATA_NAME_COMPLETE, JOYA_ADV_NAME_RECONNECT, sizeof(JOYA_ADV_NAME_RECONNECT) - 1),
 };
 
 static const struct bt_data sd[] = {
@@ -241,7 +244,7 @@ int ble_start_setup_advertising(void)
 		return err;
 	}
 
-	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	err = bt_le_adv_start(&joya_adv_param, ad_setup, ARRAY_SIZE(ad_setup), sd, ARRAY_SIZE(sd));
 	if (err < 0) {
 		printk("Advertising start failed: name=%s err=%d\n", JOYA_ADV_NAME_SETUP, err);
 		return err;
@@ -267,7 +270,7 @@ int ble_start_reconnect_advertising(void)
 		return err;
 	}
 
-	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	err = bt_le_adv_start(&joya_adv_param, ad_reconnect, ARRAY_SIZE(ad_reconnect), sd, ARRAY_SIZE(sd));
 	if (err < 0) {
 		printk("Advertising start failed: name=%s err=%d\n", JOYA_ADV_NAME_RECONNECT, err);
 		return err;

@@ -18,6 +18,7 @@ K_MSGQ_DEFINE(event_queue, sizeof(event_type_t), 20, 4);
 K_THREAD_DEFINE(fsm_thread_id, 4098, fsm_thread_loop, NULL, NULL, NULL, 5, 0, 0);
 
 static bool emergency_alerts_active = false;
+static bool identifier_pending = false;
 
 static const char *state_name(app_state_t state)
 {
@@ -315,6 +316,7 @@ void process_event(event_type_t event) {
 
         case STATE_SETUP_MODE:
             if (event == EV_BLE_CONNECTED) {
+                identifier_pending = false;
                 k_work_cancel_delayable(&connection_timeout_work);
                 current_state = STATE_WAITING_NOTIFICATION_ENABLE;
                 ble_stop_advertising();
@@ -337,14 +339,23 @@ void process_event(event_type_t event) {
 
         case STATE_WAITING_NOTIFICATION_ENABLE:
             /*
-            * Protocol contract: the app must enable notifications before sending
-            * APP_ID. Identifier events received in this state are intentionally not
-            * handled; the app must resend APP_ID after the firmware reaches
-            * STATE_SETUP_WAITING_IDENTIFIER.
+            * Protocol contract: the app should enable notifications before sending
+            * APP_ID. If CoreBluetooth delivers the APP_ID write before the CCC event
+            * reaches the FSM, keep it pending and authenticate once notifications are
+            * enabled so the ACK can actually be delivered.
             */
             if (event == EV_BLE_NOTIFY_ENABLED) {
                 current_state = STATE_SETUP_WAITING_IDENTIFIER;
+                if (identifier_pending) {
+                    identifier_pending = false;
+                    printk("Processing deferred APP_ID after notifications enabled\n");
+                    add_event(EV_APP_IDENTIFIER_RECEIVED);
+                }
+            } else if (event == EV_APP_IDENTIFIER_RECEIVED) {
+                identifier_pending = true;
+                printk("APP_ID received before notifications enabled; deferring authentication\n");
             } else if (event == EV_BLE_DISCONNECTED) {
+                identifier_pending = false;
                 if(is_app_id_empty()){
                     current_state = STATE_SETUP_MODE;
                     ble_start_setup_advertising();
@@ -358,6 +369,7 @@ void process_event(event_type_t event) {
 
         case STATE_SETUP_WAITING_IDENTIFIER:
             if(event == EV_APP_IDENTIFIER_RECEIVED){
+                identifier_pending = false;
                 if(is_app_id_empty()){
                     // New APP_ID
                     if(save_received_app_id() == 0){
@@ -386,6 +398,7 @@ void process_event(event_type_t event) {
                     }
                 }
             } else if(event == EV_BLE_DISCONNECTED){
+                identifier_pending = false;
                 if(is_app_id_empty()){
                     current_state = STATE_SETUP_MODE;
                     ble_start_setup_advertising();
@@ -418,6 +431,7 @@ void process_event(event_type_t event) {
 
         case STATE_BONDED_DISCONNECTED:
             if (event == EV_BLE_CONNECTED) {
+                identifier_pending = false;
                 current_state = STATE_WAITING_NOTIFICATION_ENABLE;
             } 
             break;
@@ -433,6 +447,7 @@ void process_event(event_type_t event) {
      * by local reset actions.
      */
     if (event == EV_BTN_FACTORY_RESET) {
+        identifier_pending = false;
         current_state = STATE_UNPAIRED;
         ble_disconnect();
         storage_factory_reset();
