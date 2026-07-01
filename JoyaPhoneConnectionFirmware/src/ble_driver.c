@@ -12,7 +12,7 @@ static struct bt_uuid_128 joya_rx_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_RX_VAL);
 static struct bt_uuid_128 joya_rx_auth_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_RX_AUTH_VAL);
 
 static const struct bt_le_adv_param joya_adv_param =
-	BT_LE_ADV_PARAM_INIT(BT_LE_ADV_OPT_CONNECTABLE,
+	BT_LE_ADV_PARAM_INIT(BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_USE_NRPA,
 			     BT_GAP_ADV_FAST_INT_MIN_2,
 			     BT_GAP_ADV_FAST_INT_MAX_2,
 			     NULL);
