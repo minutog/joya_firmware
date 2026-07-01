@@ -1,4 +1,5 @@
 #include "flash_memory.h"
+#include <errno.h>
 #include <zephyr/sys/printk.h>
 
 bool app_id_loaded_from_flash = false;
@@ -177,18 +178,17 @@ int storage_save_emergency_state(bool is_active)
 
 int storage_factory_reset(void)
 {
-    int ret;
+    int app_id_ret;
+    int emergency_ret;
     
-    ret = settings_delete("joya/app_id");
-    if (ret != 0) {
-        printk("Deleting APP_ID failed: %d\n", ret);
-        return ret;
+    app_id_ret = settings_delete("joya/app_id");
+    if (app_id_ret != 0 && app_id_ret != -ENOENT) {
+        printk("Deleting APP_ID failed: %d\n", app_id_ret);
     }
 
-    ret = settings_delete("joya/emergency");
-    if (ret != 0) {
-        printk("Deleting emergency state failed: %d\n", ret);
-        return ret;
+    emergency_ret = settings_delete("joya/emergency");
+    if (emergency_ret != 0 && emergency_ret != -ENOENT) {
+        printk("Deleting emergency state failed: %d\n", emergency_ret);
     }
 
     memset(joya_app_id, 0, sizeof(joya_app_id));
@@ -196,7 +196,14 @@ int storage_factory_reset(void)
     app_id_loaded_from_flash = false;
     invalid_app_id_setting = false;
 
-    printk("Factory reset storage complete\n");
+    printk("Factory reset storage complete: app_id_delete=%d emergency_delete=%d\n",
+           app_id_ret, emergency_ret);
 
+    if (app_id_ret != 0 && app_id_ret != -ENOENT) {
+        return app_id_ret;
+    }
+    if (emergency_ret != 0 && emergency_ret != -ENOENT) {
+        return emergency_ret;
+    }
     return 0;
 }
