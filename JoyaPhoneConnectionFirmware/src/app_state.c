@@ -178,8 +178,9 @@ void app_state_start(void)
 
     if (is_app_id_empty()) {
         current_state = STATE_UNPAIRED;
-        printk("Initial state: %s. Not advertising yet; double click button to advertise as Joya Setup.\n",
-               state_name(current_state));
+        err = ble_start_setup_advertising();
+        printk("Initial state: %s. Advertising as Joya Setup ret=%d; double click can restart setup advertising.\n",
+               state_name(current_state), err);
         return;
     }
 
