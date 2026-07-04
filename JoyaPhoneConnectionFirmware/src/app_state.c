@@ -77,21 +77,9 @@ static void emergency_restart_alerts(void)
 
 static void emergency_retry_work_handler(struct k_work *work)
 {
-    if (!is_in_emergency()) {
-        return;
-    }
+    ARG_UNUSED(work);
 
-    if (!emergency_alerts_active) {
-        return;
-    }
-
-    if (current_state != STATE_AUTHENTICATED) {
-        return;
-    }
-
-    dbg_rtt_mark("Retrying emergency event\n");
-    ble_send_event_secure(COMMAND_EMERGENCY);
-    emergency_schedule_next_retry();
+    add_event(EV_EMERGENCY_RETRY);
 }
 
 
@@ -136,6 +124,26 @@ void fsm_thread_loop(void) {
  */
 void process_event(event_type_t event) {
     int ret;
+
+    /*
+     * Note: factory reset has a higher priority that everything else
+     * to fulfill the requirement updated in previous conversation.
+     * This is a point to consider in future updates
+     */
+    if (event == EV_BTN_FACTORY_RESET) {
+        dbg_rtt_mark("Factory reset button pressed - resetting device\n");
+        current_state = STATE_UNPAIRED;
+        ble_disconnect();
+        ret = storage_factory_reset();
+        emergency_stop_alerts();
+        if(ret == 1) {
+            dbg_rtt_mark("Flash write failed while resetting flash storage - reseting only RAM state\n");
+        }
+
+        haptics_play_effect(HAPTICS_EFFECT_RESET);
+        return;
+    }
+
     if (event == EV_BTN_EMERGENCY) {
         dbg_rtt_mark("Emergency button pressed\n");
         ret = storage_save_emergency_state(true);
@@ -176,6 +184,29 @@ void process_event(event_type_t event) {
     */
     if (is_in_emergency()) {
         switch (event) {
+            case EV_EMERGENCY_RETRY:
+                if (!is_in_emergency()) {
+                    return;
+                }
+
+                if (!emergency_alerts_active) {
+                    return;
+                }
+
+                if (current_state != STATE_AUTHENTICATED) {
+                    return;
+                }
+
+                dbg_rtt_mark("Retrying emergency event\n");
+
+                ret = ble_send_event_secure(COMMAND_EMERGENCY);
+                if (ret != 0) {
+                    dbg_rtt_mark("Failed to resend COMMAND_EMERGENCY - continuing\n");
+                }
+
+                emergency_schedule_next_retry();
+                return;
+
             case EV_APP_FOLLOW_ME:
                 if (current_state != STATE_AUTHENTICATED) {
                     return;
@@ -248,10 +279,9 @@ void process_event(event_type_t event) {
                 return;
 
             case EV_BTN_1_PULSE:
-            case EV_BTN_2_PULSE:
+            /* Remove of EV_BTN_2_PULSE to allow the reconnect after reset during an emergency */
             case EV_BTN_LONG_PRESS:
             case EV_APP_FRIEND_EMERGENCY:
-            case EV_BTN_FACTORY_RESET:
                 dbg_rtt_mark("Ignoring event while emergency is active\n");
                 /*
                 * Normal app actions are ignored while emergency is active.
@@ -414,23 +444,5 @@ void process_event(event_type_t event) {
         default:
             // (for future use) Handle unexpected state
             break;
-    }
-
-    /*
-     * Note: factory reset is intentionally ignored while emergency is active.
-     * Requirement: emergency handling has priority and must not be interrupted
-     * by local reset actions.
-     */
-    if (event == EV_BTN_FACTORY_RESET) {
-        dbg_rtt_mark("Factory reset button pressed - resetting device\n");
-        current_state = STATE_UNPAIRED;
-        ble_disconnect();
-        int ret = storage_factory_reset();
-        if(ret == 1) {
-            dbg_rtt_mark("Flash write failed while resetting flash storage - reseting only RAM state\n");
-        }
-
-        haptics_play_effect(HAPTICS_EFFECT_RESET);
-        return;
     }
 }
