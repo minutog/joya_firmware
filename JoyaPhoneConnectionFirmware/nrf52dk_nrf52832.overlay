@@ -57,3 +57,7 @@
 &uart0 {
 	status = "disabled";
 };
+
+&uicr {
+    /delete-property/ gpio-as-nreset;
+};

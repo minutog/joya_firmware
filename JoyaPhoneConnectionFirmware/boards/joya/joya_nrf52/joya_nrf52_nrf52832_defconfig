@@ -1,0 +1,4 @@
+CONFIG_GPIO=y
+
+# P0.21 is NOT used as reset on Joya PCB, it does not have a pull-up resistor
+# Do not enable CONFIG_GPIO_AS_PINRESET.

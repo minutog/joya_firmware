@@ -24,11 +24,12 @@ int main(void) {
         return -1;
     }
 
+    /*
     ret = haptics_init();
     if (ret < 0) {
         dbg_rtt_mark("Haptics initialization failed - continuing without haptics\n");
         // (improvement): decide what to do if haptics initialization fails (e.g., retry, log error, etc.)
-    }
+    }*/
     
     dbg_rtt_mark("Initialization complete\n");
 

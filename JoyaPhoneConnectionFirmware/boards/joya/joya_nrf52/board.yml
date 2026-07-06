@@ -1,0 +1,8 @@
+board:
+  name: joya_nrf52
+  full_name: Joya nRF52 PCB
+  vendor: joya
+  socs:
+    - name: nrf52832
+
+# For calling -b joya_nrf52/nrf52832

@@ -1,0 +1,5 @@
+# Copyright (c) 2026 Joya
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_JOYA_NRF52
+	select SOC_NRF52832_QFAA
