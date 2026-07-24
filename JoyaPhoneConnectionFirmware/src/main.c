@@ -8,7 +8,8 @@
 int main(void) {
     bool ota_test_boot = !boot_is_img_confirmed();
     
-    int ret = storage_init();
+    int ret ;
+    ret = storage_init();
     if (ret != 0) {
         dbg_rtt_mark("Storage initialization failed - continuing with RAM defaults\n");
         // (improvement): decide what to do if haptics initialization fails (e.g., retry, log error, etc.)
