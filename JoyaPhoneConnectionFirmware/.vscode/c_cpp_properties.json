@@ -2,7 +2,7 @@
     "configurations": [
         {
             "name": "Zephyr",
-            "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+            "compileCommands": "${workspaceFolder}/build/JoyaPhoneConnectionFirmware/compile_commands.json",
             "compilerPath": "/home/fran/zephyr-sdk-0.17.4/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc",
             "cStandard": "c17",
             "cppStandard": "gnu++17",
