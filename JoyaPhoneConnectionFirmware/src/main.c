@@ -19,7 +19,6 @@ int main(void) {
         dbg_rtt_mark("BLE driver initialization failed\n");
         return -1;
     }
-    ble_start_setup_advertising();
 
     if (ota_test_boot) {
         ble_start_setup_advertising();
