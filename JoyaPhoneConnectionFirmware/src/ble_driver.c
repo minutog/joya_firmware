@@ -1,6 +1,6 @@
 #include "ble_driver.h"
 
-#define JOYA_ADV_NAME_SETUP      "Joya TEST"
+#define JOYA_ADV_NAME_SETUP      "Joya Setup"
 #define JOYA_ADV_NAME_RECONNECT  "Joya"
 
 
