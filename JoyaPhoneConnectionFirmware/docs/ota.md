@@ -31,5 +31,38 @@
 ----
 
 `rm -rf build`
+
 `west build -b joya_nrf52 . --sysbuild -- -DBOARD_ROOT=$PWD 2>&1 | tee build_joya.log`
+
 `west flash -d build --runner jlink --erase`
+
+----
+1. Compilar el proyecto con la clave privada
+
+    `west build   -d build_joya   -b joya_nrf52/nrf52832   . --sysbuild   -- -DSB_CONFIG_BOOT_SIGNATURE_KEY_FILE=\"(...)/joya_dev-private.pem\"`
+
+2. Unir el MCUBoot y la app
+
+    `srec_cat \
+    build_joya/mcuboot/zephyr/zephyr.hex -Intel \
+    build_joya/JoyaPhoneConnectionFirmware/zephyr/zephyr.signed.hex -Intel \
+    -o build_joya/merged.hex -Intel`
+
+    `head build_joya/merged.hex`
+
+    `srec_info build_joya/merged.hex -Intel`
+
+3. Cargar el archivo completo
+    `JLinkExe -device nRF52832_xxAA -if SWD -speed 4000`
+
+    `erase`
+
+    `loadfile build_joya/merged.hex`
+
+    `r`
+    `g`
+    `q`
+
+NOTA: para las actualizaciones por OTA, utilizar el archivo `zephyr.signed.bin
+
+----
