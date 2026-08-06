@@ -19,3 +19,4 @@ DerivedData/
 # macOS / editor noise
 .vscode/settings.json
 .idea/
+JoyaPhoneConnectionFirmware/docker/JLink_Linux_*.deb
