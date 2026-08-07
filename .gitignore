@@ -4,6 +4,7 @@
 # Zephyr / Nordic build outputs
 JoyaPhoneConnectionFirmware/zephyr_base/
 **/build/
+**/build_joya/
 **/.west/
 *.hex
 *.elf
