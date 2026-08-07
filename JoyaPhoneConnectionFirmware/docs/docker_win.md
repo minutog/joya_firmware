@@ -11,10 +11,13 @@ sudo docker run --rm -it \
 3. (Opcional) Abrir Visual Studio Code y adjuntar el contenedor (Ctrl + Shift + P -> Attach running container...)
 
 ### Primer flash
+Notas: los comandos esta diseñado para ejecutarse desde JoyaPhoneConnectionFirmware
+
 1. Compilar (si se realizó el paso 3, se puede hacer desde la terminal de VSC)
 ```
 west build -d build_joya -b joya_nrf52/nrf52832 . --sysbuild -- -DSB_CONFIG_BOOT_SIGNATURE_KEY_FILE=\"/workspace/keys/joya_dev-private.pem\"
 ```
+
 
 2. Armar el .hex 
 ```
