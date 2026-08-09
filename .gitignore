@@ -4,6 +4,7 @@
 # Zephyr / Nordic build outputs
 JoyaPhoneConnectionFirmware/zephyr_base/
 **/build/
+**/build_joya/
 **/.west/
 *.hex
 *.elf
@@ -19,5 +20,4 @@ DerivedData/
 # macOS / editor noise
 .vscode/settings.json
 .idea/
-
-*.deb
+JoyaPhoneConnectionFirmware/docker/JLink_Linux_*.deb
