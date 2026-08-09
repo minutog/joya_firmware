@@ -96,4 +96,4 @@ srec_cat \
 3. `loadfile files/merged.hex`
 4. `r`
 5. `g`
-6. `q
+6. `q`
