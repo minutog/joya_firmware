@@ -19,3 +19,5 @@ DerivedData/
 # macOS / editor noise
 .vscode/settings.json
 .idea/
+
+*.deb
