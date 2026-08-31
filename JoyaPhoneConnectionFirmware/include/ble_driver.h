@@ -36,18 +36,12 @@ int ble_driver_init(void);
 int ble_send_event_secure(uint8_t event_byte);
 
 /**
- * @brief Start advertising with the name JOYA_ADV_NAME_SETUP.
- * This is used when the device is unclaimed.
+ * @brief Start advertising for a new connection or reconnection.
+ * @param is_new_connection Set to true for new connections (JOYA SETUP), false for reconnections (JOYA).
  * @return 0 on success, or a negative error code on failure.
  */
-int ble_start_setup_advertising(void);
+int ble_start_setup_advertising(bool is_new_connection);
 
-/**
- * @brief Start advertising with the name JOYA_ADV_NAME_RECONNECT.
- * This is used for reconnection when already paired.
- * @return 0 on success, or a negative error code on failure.
- */
-int ble_start_reconnect_advertising(void);
 
 /**
  * @brief Stop any ongoing advertising.

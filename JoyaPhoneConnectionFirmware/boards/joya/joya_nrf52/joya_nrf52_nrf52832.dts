@@ -23,7 +23,7 @@
 
 		/* GPIO 11 for production, GPIO 13 for development */
 		emergency_button: emergency_button {
-			gpios = <&gpio0 11 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			gpios = <&gpio0 13 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 			label = "Joya emergency button";
 			zephyr,code = <0>;
 		};

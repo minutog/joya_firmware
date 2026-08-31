@@ -1,5 +1,6 @@
 .DS_Store
 *.log
+*.pyc
 
 # Zephyr / Nordic build outputs
 JoyaPhoneConnectionFirmware/zephyr_base/

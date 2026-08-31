@@ -11,34 +11,34 @@ int main(void) {
     int ret ;
     ret = storage_init();
     if (ret != 0) {
-        dbg_rtt_mark("Storage initialization failed - continuing with RAM defaults\n");
+        // LOG: Storage initialization failed - continuing with RAM defaults
         // (improvement): decide what to do if haptics initialization fails (e.g., retry, log error, etc.)
     }
     
     ret = ble_driver_init();
     if (ret) {
-        dbg_rtt_mark("BLE driver initialization failed\n");
+        // LOG: BLE driver initialization failed
         return -1;
     }
 
     if (ota_test_boot) {
-        ble_start_setup_advertising();
+        ble_start_setup_advertising(true);
     }
     
     ret = button_init();
     if (ret != 0) {
-        dbg_rtt_mark("Button initialization failed\n");
+        // LOG: Button initialization failed
         return -1;
     }
 
 
     ret = haptics_init();
     if (ret < 0) {
-        dbg_rtt_mark("Haptics initialization failed - continuing without haptics\n");
+        // LOG: Haptics initialization failed - continuing without haptics
         // (improvement): decide what to do if haptics initialization fails (e.g., retry, log error, etc.)
     }
     
-    dbg_rtt_mark("Initialization complete\n");
+    // LOG: Initialization complete
 
 
     // Keep the main thread alive

@@ -188,7 +188,7 @@ int ble_driver_init(void) {
     return 0;
 }
 
-int ble_start_setup_advertising(void)
+int ble_start_setup_advertising(bool is_new_connection)
 {
 	int err;
 
@@ -197,30 +197,11 @@ int ble_start_setup_advertising(void)
 		// (improvement): decide what to do if stopping advertising fails (e.g., retry, log error, etc.)
 	}
 
-	err = bt_set_name(JOYA_ADV_NAME_SETUP);
-	if (err < 0) {
-		return err;
+	if (is_new_connection) {
+		err = bt_set_name(JOYA_ADV_NAME_SETUP);
+	} else {
+		err = bt_set_name(JOYA_ADV_NAME_RECONNECT);
 	}
-
-	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
-	if (err < 0) {
-		return err;
-	}
-
-
-	return 0;
-}
-
-int ble_start_reconnect_advertising(void)
-{
-	int err;
-
-	err = bt_le_adv_stop();
-	if (err < 0 && err != -EALREADY) {
-		// (improvement): decide what to do if stopping advertising fails (e.g., retry, log error, etc.)
-	}
-
-	err = bt_set_name(JOYA_ADV_NAME_RECONNECT);
 	if (err < 0) {
 		return err;
 	}

@@ -39,7 +39,8 @@ RUN apt-get update \
 
 RUN python3 -m venv /opt/venv \
     && pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir "west==${WEST_VERSION}"
+    && pip install --no-cache-dir "west==${WEST_VERSION}" \
+    && pip install --no-cache-dir bleak \
 
 RUN west init \
         -m https://github.com/zephyrproject-rtos/zephyr \
