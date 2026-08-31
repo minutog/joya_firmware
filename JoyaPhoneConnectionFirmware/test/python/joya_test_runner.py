@@ -1,4 +1,5 @@
 import time
+import asyncio
 
 from joya_ble_client import (
     JoyaBleClient,
@@ -424,18 +425,21 @@ class JoyaTestRunner:
 
         await self._disconnect_if_needed()
 
-        self._action_then_continue(
-            "Turn Joya ON. It must already be provisioned "
-            "and advertise as 'Joya' when entering connection mode."
-        )
-
         try:
-            print()
-            print("[STEP] First checking that the device is provisioned.")
+            # -----------------------------------------------------
+            # Verify initial state: provisioned device -> "Joya"
+            # -----------------------------------------------------
+
+            self._action_then_continue(
+                "Turn Joya ON."
+            )
 
             self._action_then_continue(
                 "Enter connection mode using the double press."
             )
+
+            print()
+            print("[STEP] Checking that the device is provisioned...")
 
             await self.joya.scan(
                 initial=False,
@@ -446,9 +450,13 @@ class JoyaTestRunner:
                 "Provisioned device found as 'Joya'."
             )
 
+            # -----------------------------------------------------
+            # Factory reset
+            # -----------------------------------------------------
+
             print()
             print(
-                "[ACTION] Start holding the Factory Reset button NOW."
+                "[ACTION] Start holding the Factory Reset button."
             )
 
             input(
@@ -487,39 +495,50 @@ class JoyaTestRunner:
                 "Press ENTER after releasing the button..."
             )
 
-            # Give the firmware a little time to finish the reset.
+            # Give firmware some time to finish the reset.
             await asyncio.sleep(1.0)
+
+            # -----------------------------------------------------
+            # Verify state after factory reset
+            # -----------------------------------------------------
 
             self._action_then_continue(
                 "Perform the double press to enter setup mode."
             )
 
             print()
-            print(
-                "[STEP] Looking for 'Joya Setup'..."
-            )
+            print("[STEP] Looking for 'Joya Setup'...")
 
-            setup_device = await BleakScanner.find_device_by_name(
-                DEVICE_INIT_NAME,
+            await self.joya.scan(
+                initial=True,
                 timeout=scan_timeout
             )
 
-            if setup_device is None:
-                raise RuntimeError(
-                    "'Joya Setup' was not found after factory reset."
+            self._pass(
+                "'Joya Setup' found."
+            )
+
+            # -----------------------------------------------------
+            # Negative check: "Joya" should no longer be advertised
+            # -----------------------------------------------------
+
+            print()
+            print(
+                "[STEP] Checking that 'Joya' is no longer advertised..."
+            )
+
+            try:
+                await self.joya.scan(
+                    initial=False,
+                    timeout=2.0
                 )
 
-            print(
-                "[STEP] Checking that the device is no longer "
-                "advertising as 'Joya'..."
-            )
+            except RuntimeError:
+                # This is exactly what we expect:
+                # "Joya" should not be found.
+                pass
 
-            provisioned_device = await BleakScanner.find_device_by_name(
-                DEVICE_NAME,
-                timeout=2.0
-            )
-
-            if provisioned_device is not None:
+            else:
                 raise RuntimeError(
                     "Factory reset seems incomplete: "
                     "'Joya' is still being advertised."
