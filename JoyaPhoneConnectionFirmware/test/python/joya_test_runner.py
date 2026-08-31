@@ -414,6 +414,128 @@ class JoyaTestRunner:
 
         return True
 
+
+    async def test_factory_reset(
+        self,
+        hold_time: float = 15.0,
+        scan_timeout: float = 5.0
+    ) -> bool:
+        self._show_test("FACTORY RESET")
+
+        await self._disconnect_if_needed()
+
+        self._action_then_continue(
+            "Turn Joya ON. It must already be provisioned "
+            "and advertise as 'Joya' when entering connection mode."
+        )
+
+        try:
+            print()
+            print("[STEP] First checking that the device is provisioned.")
+
+            self._action_then_continue(
+                "Enter connection mode using the double press."
+            )
+
+            await self.joya.scan(
+                initial=False,
+                timeout=scan_timeout
+            )
+
+            self._pass(
+                "Provisioned device found as 'Joya'."
+            )
+
+            print()
+            print(
+                "[ACTION] Start holding the Factory Reset button NOW."
+            )
+
+            input(
+                "Press ENTER as soon as you start holding it..."
+            )
+
+            print()
+            print(
+                f"[STEP] Keep holding for approximately "
+                f"{hold_time:.0f} seconds."
+            )
+
+            start = time.monotonic()
+
+            while True:
+                elapsed = time.monotonic() - start
+                remaining = hold_time - elapsed
+
+                if remaining <= 0:
+                    break
+
+                print(
+                    f"\rHold... {remaining:4.1f} s remaining",
+                    end="",
+                    flush=True
+                )
+
+                await asyncio.sleep(0.1)
+
+            print()
+            print()
+            print(">>> RELEASE THE BUTTON NOW <<<")
+            print("\a", end="", flush=True)
+
+            input(
+                "Press ENTER after releasing the button..."
+            )
+
+            # Give the firmware a little time to finish the reset.
+            await asyncio.sleep(1.0)
+
+            self._action_then_continue(
+                "Perform the double press to enter setup mode."
+            )
+
+            print()
+            print(
+                "[STEP] Looking for 'Joya Setup'..."
+            )
+
+            setup_device = await BleakScanner.find_device_by_name(
+                DEVICE_INIT_NAME,
+                timeout=scan_timeout
+            )
+
+            if setup_device is None:
+                raise RuntimeError(
+                    "'Joya Setup' was not found after factory reset."
+                )
+
+            print(
+                "[STEP] Checking that the device is no longer "
+                "advertising as 'Joya'..."
+            )
+
+            provisioned_device = await BleakScanner.find_device_by_name(
+                DEVICE_NAME,
+                timeout=2.0
+            )
+
+            if provisioned_device is not None:
+                raise RuntimeError(
+                    "Factory reset seems incomplete: "
+                    "'Joya' is still being advertised."
+                )
+
+        except Exception as e:
+            self._fail(str(e))
+            return False
+
+        self._pass(
+            "Factory reset successful: "
+            "'Joya Setup' found and 'Joya' not found."
+        )
+
+        return True
+
     # ---------------------------------------------------------
     # EMERGENCY
     # ---------------------------------------------------------

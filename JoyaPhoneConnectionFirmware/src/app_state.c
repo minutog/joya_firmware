@@ -132,10 +132,6 @@ void process_event(event_type_t event) {
      */
     if (event == EV_BTN_FACTORY_RESET) {
         // LOG: Factory reset button pressed - resetting device
-        ret = ble_send_event_secure(COMMAND_FACTORY_RESET);
-        if(ret != 0){
-            // LOG: Failed to send FACTORY_RESET - continuing without sending
-        }
         current_state = STATE_UNPAIRED;
         ble_disconnect();
         ret = storage_factory_reset();

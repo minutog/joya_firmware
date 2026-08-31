@@ -188,6 +188,11 @@ async def main():
             runner.test_routine_end
         ),
 
+        "12": (
+            "Factory reset",
+            runner.test_factory_reset
+        ),
+
         # -----------------------------------------------------
         # Emergency
         # -----------------------------------------------------
