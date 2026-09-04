@@ -380,7 +380,7 @@ void process_event(event_type_t event) {
                         // LOG: Failed to send ACK - continuing without sending
                     }
 
-                    haptics_play_effect(HAPTICS_EFFECT_AUTH);
+                    haptics_play(HAPTICS_PATTERN_ACK_CONNECTION);
                     add_event(EV_APP_AUTHENTICATED);
                     return;
                     

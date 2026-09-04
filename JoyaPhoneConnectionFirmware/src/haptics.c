@@ -34,7 +34,7 @@ static size_t active_step_index;
 
 static void haptics_pattern_work_handler(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(haptics_pattern_work, haptics_pattern_work_handler);
-
+/*
 static const struct haptic_step pattern_setup_mode[] = {
 	{ 80,  55 },
 	{ 80,  75 },
@@ -42,23 +42,30 @@ static const struct haptic_step pattern_setup_mode[] = {
 	{ 120, 115 },
 	{ 180, 0   },
 };
+*/
+// struct haptic_step = [duration_ms, amplitude]
+static const struct haptic_step pattern_setup_mode[] = {
+	{ 700,  50 },
+	{ 500, 0 },
+};
+
+static const struct haptic_step pattern_ack_connection[] = {
+	{ 700, 50},
+	{ 500, 0},
+	{ 700, 50},
+	{ 500, 0},
+};
 
 static const struct haptic_step pattern_routine_start[] = {
-	{ 90,  104 },
-	{ 70,  0   },
-	{ 90,  104 },
-	{ 180, 0   },
-	{ 110, 108 },
-	{ 160, 0   },
-	{ 320, 120 },
-	{ 120, 0   },
+	{ 700,  50 },
+	{ 500,  0   },
 };
 
 static const struct haptic_step pattern_routine_cancel[] = {
-	{ 180, 115 },
-	{ 120, 90  },
-	{ 120, 65  },
-	{ 240, 0   },
+	{ 700, 50 },
+	{ 500, 0  },
+	{ 700, 50  },
+	{ 500, 0   },
 };
 
 static const struct haptic_step pattern_emergency_start[] = {
@@ -82,23 +89,44 @@ static const struct haptic_step pattern_follow_me[] = {
 };
 
 static const struct haptic_step pattern_friend_emergency[] = {
-    { 180, 120 }, { 120, 0 },
-    { 180, 120 }, { 120, 0 },
-    { 600, 127 }, { 400, 0 },
+    { 180, 120 }, 
+	{ 120, 0 },
+    { 180, 120 }, 
+	{ 120, 0 },
+    { 600, 127 }, 
+	{ 400, 0 },
 };
 
+/**
+ * @brief Write one byte to a DRV2605 register.
+ * @param reg Register address to write.
+ * @param value Value to write into the register.
+ * @return 0 on success, or a negative error code on failure.
+ */
 static int drv2605_write_reg(uint8_t reg, uint8_t value)
 {
+	// Create a buffer containing the register address followed by the value to write
 	uint8_t data[2] = { reg, value };
 
 	return i2c_write(haptic_i2c, data, sizeof(data), drv2605_addr);
 }
 
+/**
+ * @brief Read one byte from a DRV2605 register.
+ * @param reg Register address to read.
+ * @param value Output buffer for the register value.
+ * @return 0 on success, or a negative error code on failure.
+ */
 static int drv2605_read_reg(uint8_t reg, uint8_t *value)
 {
 	return i2c_reg_read_byte(haptic_i2c, drv2605_addr, reg, value);
 }
 
+/**
+ * @brief Check whether a DRV2605 responds at an I2C address.
+ * @param addr I2C address to probe.
+ * @return 0 if the status register was read, or a negative error code on failure.
+ */
 static int drv2605_probe_addr(uint16_t addr)
 {
 	uint8_t status;
@@ -106,15 +134,22 @@ static int drv2605_probe_addr(uint16_t addr)
 	return i2c_reg_read_byte(haptic_i2c, addr, DRV2605_REG_STATUS, &status);
 }
 
+/**
+ * @brief Set the DRV2605 to real-time playback mode and apply an amplitude.
+ * @param amplitude Real-time playback amplitude to apply.
+ * @return 0 on success, or a negative error code on failure.
+ */
 static int drv2605_set_rtp(uint8_t amplitude)
 {
 	int err;
 
+	// Set the DRV2605 to real-time playback mode
 	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_RTP);
 	if (err < 0) {
 		return err;
 	}
 
+	// Write the amplitude to the RTP_INPUT register
 	err = drv2605_write_reg(DRV2605_REG_RTP_INPUT, amplitude);
 	if (err < 0) {
 		return err;
@@ -123,34 +158,48 @@ static int drv2605_set_rtp(uint8_t amplitude)
 	return 0;
 }
 
+/**
+ * @brief Stop real-time playback and reset the active pattern state.
+ */
 static void drv2605_idle(void)
 {
+	// Set the DRV2605 to internal trigger mode and turn off real-time playback
 	(void)drv2605_write_reg(DRV2605_REG_RTP_INPUT, HAPTIC_RTP_OFF);
 	(void)drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
 
+	// Reset the active pattern state
 	active_pattern = HAPTICS_PATTERN_NONE;
 	active_step_index = 0;
 }
 
+/**
+ * @brief Load and trigger an effect from the DRV2605 waveform library.
+ * @param effect Waveform library effect identifier.
+ * @return 0 on success, or a negative error code on failure.
+ */
 static int drv2605_play_effect(uint8_t effect)
 {
 	int err;
 
+	// Load the effect into the first waveform sequence slot
 	err = drv2605_write_reg(DRV2605_REG_WAVESEQ1, effect);
 	if (err < 0) {
 		return err;
 	}
 
+	// Indicate that there are no additional effects in the sequence
 	err = drv2605_write_reg(DRV2605_REG_WAVESEQ2, 0x00);
 	if (err < 0) {
 		return err;
 	}
 
+	// Set the DRV2605 to internal trigger mode and start playback
 	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
 	if (err < 0) {
 		return err;
 	}
 
+	// Trigger the effect by writing to the GO register
 	err = drv2605_write_reg(DRV2605_REG_GO, 0x01);
 	if (err < 0) {
 		return err;
@@ -159,6 +208,12 @@ static int drv2605_play_effect(uint8_t effect)
 	return 0;
 }
 
+/**
+ * @brief Get the step sequence associated with a haptic pattern.
+ * @param pattern Pattern whose sequence is requested.
+ * @param step_count Output for the number of steps in the sequence.
+ * @return Pointer to the step sequence, or NULL if the pattern is invalid or empty.
+ */
 static const struct haptic_step *get_pattern_steps(enum haptics_pattern pattern,
 						   size_t *step_count)
 {
@@ -187,6 +242,10 @@ static const struct haptic_step *get_pattern_steps(enum haptics_pattern pattern,
 		*step_count = ARRAY_SIZE(pattern_friend_emergency);
 		return pattern_friend_emergency;
 
+	case HAPTICS_PATTERN_ACK_CONNECTION:
+		*step_count = ARRAY_SIZE(pattern_ack_connection);
+		return pattern_ack_connection;
+
 	case HAPTICS_PATTERN_NONE:
 	default:
 		*step_count = 0;
@@ -194,6 +253,12 @@ static const struct haptic_step *get_pattern_steps(enum haptics_pattern pattern,
 	}
 }
 
+/**
+ * @brief Retrieve and advance to the next step of the active pattern.
+ * @param amplitude Output for the amplitude of the next step.
+ * @param duration_ms Output for the duration of the next step, in milliseconds.
+ * @return true if a step was returned, or false if the pattern is complete.
+ */
 static bool get_next_step(uint8_t *amplitude, uint16_t *duration_ms)
 {
 	const struct haptic_step *steps;
@@ -212,6 +277,10 @@ static bool get_next_step(uint8_t *amplitude, uint16_t *duration_ms)
 	return true;
 }
 
+/**
+ * @brief Execute one step of the active pattern and schedule the following step.
+ * @param work Work item associated with the haptic pattern scheduler.
+ */
 static void haptics_pattern_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
@@ -238,6 +307,10 @@ static void haptics_pattern_work_handler(struct k_work *work)
  * PUBLIC API
  */
 
+/**
+ * @brief Initialize the haptic enable GPIO and the DRV2605 controller.
+ * @return 0 on success, or a negative error code on failure.
+ */
 int haptics_init(void)
 {
 	int err;
@@ -298,6 +371,10 @@ int haptics_init(void)
 	return 0;
 }
 
+/**
+ * @brief Cancel the active pattern and trigger one waveform library effect.
+ * @param effect Effect to play.
+ */
 void haptics_play_effect(enum haptics_effect effect)
 {
     if (!haptics_ready) {
@@ -315,6 +392,10 @@ void haptics_play_effect(enum haptics_effect effect)
     }
 }
 
+/**
+ * @brief Start a haptic pattern from its first step.
+ * @param pattern Pattern to play, or HAPTICS_PATTERN_NONE to stop playback.
+ */
 void haptics_play(enum haptics_pattern pattern)
 {
 	if (!haptics_ready) {
@@ -335,6 +416,9 @@ void haptics_play(enum haptics_pattern pattern)
 	(void)k_work_schedule(&haptics_pattern_work, K_NO_WAIT);
 }
 
+/**
+ * @brief Cancel the active pattern and place the DRV2605 in its idle state.
+ */
 void haptics_stop(void)
 {
 	(void)k_work_cancel_delayable(&haptics_pattern_work);
@@ -344,6 +428,10 @@ void haptics_stop(void)
 	}
 }
 
+/**
+ * @brief Check whether the haptic controller was initialized successfully.
+ * @return true if the controller is ready, otherwise false.
+ */
 bool haptics_is_ready(void)
 {
 	return haptics_ready;

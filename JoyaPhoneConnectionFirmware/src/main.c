@@ -28,6 +28,7 @@ int main(void) {
     ret = button_init();
     if (ret != 0) {
         // LOG: Button initialization failed
+        ble_start_setup_advertising(true);
         return -1;
     }
 
@@ -36,6 +37,12 @@ int main(void) {
     if (ret < 0) {
         // LOG: Haptics initialization failed - continuing without haptics
         // (improvement): decide what to do if haptics initialization fails (e.g., retry, log error, etc.)
+    } else {
+        /*
+         * Non-blocking startup check. If the haptic controller was detected,
+         * schedule one short existing pattern without delaying BLE or OTA.
+         */
+        haptics_play(HAPTICS_PATTERN_SETUP_MODE);
     }
     
     // LOG: Initialization complete
