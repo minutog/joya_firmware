@@ -21,6 +21,7 @@ target_sources(app PRIVATE
     src/button.c
     src/haptics.c
     src/flash_memory.c
+    src/nbm5100.c
 )
 
 # Include directories for the application

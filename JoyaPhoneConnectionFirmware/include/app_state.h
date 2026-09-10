@@ -5,7 +5,7 @@
 #include "app_comm.h"
 #include "flash_memory.h"
 #include "haptics.h"
-#include "debug_rtt.h"
+#include "nbm5100.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -53,7 +53,10 @@ typedef enum {
     EV_APP_STOP_EMERGENCY,     
     EV_APP_FOLLOW_ME,
     EV_APP_ACK_EMERGENCY,
-    EV_APP_FRIEND_EMERGENCY
+    EV_APP_FRIEND_EMERGENCY,
+
+    // OTHER EVENTS
+    EV_NBM_READY,
 } event_type_t;
 
 /**

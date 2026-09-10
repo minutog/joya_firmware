@@ -3,7 +3,7 @@
 #include <zephyr/dfu/mcuboot.h>
 #include "button.h"
 #include "app_state.h"
-#include "debug_rtt.h"
+#include "nbm5100.h"
 
 int main(void) {
     bool ota_test_boot = !boot_is_img_confirmed();
@@ -32,7 +32,7 @@ int main(void) {
         return -1;
     }
 
-
+    nbm_ready_init();
     ret = haptics_init();
     if (ret < 0) {
         // LOG: Haptics initialization failed - continuing without haptics

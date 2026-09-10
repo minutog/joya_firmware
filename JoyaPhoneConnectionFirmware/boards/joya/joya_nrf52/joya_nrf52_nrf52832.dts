@@ -23,9 +23,16 @@
 
 		/* GPIO 11 for production, GPIO 13 for development */
 		emergency_button: emergency_button {
-			gpios = <&gpio0 11 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			gpios = <&gpio0 13 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 			label = "Joya emergency button";
 			zephyr,code = <0>;
+		};
+
+		/* GPIO TO DEFINE for production, GPIO 11 for development */
+		nbm_ready: nbm_ready {
+			gpios = <&gpio0 11 GPIO_ACTIVE_HIGH>;
+			label = "NBM ready";
+			zephyr,code = <1>;
 		};
 	};
 
@@ -36,6 +43,7 @@
 	aliases {
 		boton-emergencia = &emergency_button;
 		sw0 = &emergency_button;
+		nbm-ready = &nbm_ready;
 	};
 };
 

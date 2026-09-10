@@ -420,6 +420,19 @@ void process_event(event_type_t event) {
             break;
 
         case STATE_AUTHENTICATED:
+            /* FOR TESTING */
+            if (event == EV_NBM_READY) {
+                if(is_nbm_ready()){
+                    ret = ble_send_event_secure(0xAA);
+                } else {
+                    ret = ble_send_event_secure(0xBB);
+                }
+                if(ret != 0){
+                    // LOG: Failed to send NBM_READY - continuing without sending
+                }
+            }
+            /* END FOR TESTING */
+            
             // On this state, the device is connected and authenticated with the app. It can send and receive events.
             if (event == EV_APP_FRIEND_EMERGENCY){
                 // LOG: Friend emergency event received
