@@ -8,9 +8,14 @@
 
 static const struct device *nbm_i2c = DEVICE_DT_GET(DT_NODELABEL(i2c0));
 static const struct gpio_dt_spec nbm_ready = GPIO_DT_SPEC_GET(DT_ALIAS(nbm_ready), gpios);
+#ifdef JOYA_TEST_MODE
+static const struct gpio_dt_spec test_ready_led = GPIO_DT_SPEC_GET(DT_ALIAS(test_ready_led), gpios);
+#endif
 
 static struct gpio_callback nbm_ready_cb_data;
 static volatile bool nbm_ready_flag = false;
+
+
 
 bool is_nbm_ready(void) {
     return nbm_ready_flag;
@@ -28,9 +33,14 @@ static void nbm_ready_isr(const struct device *port, struct gpio_callback *cb, u
     ARG_UNUSED(pins);
 
     int level = gpio_pin_get_dt(&nbm_ready);
-    nbm_ready_flag = (level > 0);
+    if (level < 0) {
+        return;
+    }
 
-    add_event(EV_NBM_READY);
+    nbm_ready_flag = (level > 0);
+#ifdef JOYA_TEST_MODE
+    gpio_pin_set_dt(&test_ready_led, nbm_ready_flag);
+#endif
 }
 
 
@@ -49,8 +59,20 @@ int nbm5100_init(void) {
     return 0;
 }
 
-int nbm_ready_init(void) {
+int nbm_ready_init(void)
+{
     int ret;
+
+#ifdef JOYA_TEST_MODE
+    if (!gpio_is_ready_dt(&test_ready_led)) {
+        return -ENODEV;
+    }
+
+    ret = gpio_pin_configure_dt(&test_ready_led, GPIO_OUTPUT_INACTIVE);
+    if (ret) {
+        return ret;
+    }
+#endif
 
     if (!gpio_is_ready_dt(&nbm_ready)) {
         return -ENODEV;
@@ -61,14 +83,25 @@ int nbm_ready_init(void) {
         return ret;
     }
 
-    ret = gpio_pin_interrupt_configure_dt(&nbm_ready, GPIO_INT_EDGE_BOTH);
-    if (ret) {
+    /* Initialize software state with the actual pin level */
+    ret = gpio_pin_get_dt(&nbm_ready);
+    if (ret < 0) {
         return ret;
     }
+
+    nbm_ready_flag = (ret > 0);
+#ifdef JOYA_TEST_MODE
+    gpio_pin_set_dt(&test_ready_led, nbm_ready_flag);
+#endif
 
     gpio_init_callback(&nbm_ready_cb_data, nbm_ready_isr, BIT(nbm_ready.pin));
 
     ret = gpio_add_callback(nbm_ready.port, &nbm_ready_cb_data);
+    if (ret) {
+        return ret;
+    }
+
+    ret = gpio_pin_interrupt_configure_dt(&nbm_ready, GPIO_INT_EDGE_BOTH);
 
     return ret;
 }

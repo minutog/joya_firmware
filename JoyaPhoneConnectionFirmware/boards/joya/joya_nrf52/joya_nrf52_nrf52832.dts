@@ -36,6 +36,22 @@
 		};
 	};
 
+#ifdef JOYA_TEST_MODE
+	test_leds {
+		compatible = "gpio-leds";
+
+		test_ready_led: test_ready_led {
+			gpios = <&gpio0 17 GPIO_ACTIVE_LOW>;
+			label = "NBM ready test LED";
+		};
+
+		test_haptic_led: test_haptic_led {
+			gpios = <&gpio0 18 GPIO_ACTIVE_LOW>;
+			label = "Haptic execution test LED";
+		};
+	};
+#endif
+
 	zephyr,user {
 		haptic_en_gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
 	};
@@ -44,6 +60,10 @@
 		boton-emergencia = &emergency_button;
 		sw0 = &emergency_button;
 		nbm-ready = &nbm_ready;
+#ifdef JOYA_TEST_MODE
+		test-ready-led = &test_ready_led;
+		test-haptic-led = &test_haptic_led;
+#endif
 	};
 };
 

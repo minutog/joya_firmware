@@ -2,8 +2,19 @@ cmake_minimum_required(VERSION 3.20.0)
 
 list(APPEND BOARD_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Inicialize Zephyr build system
+if(DEFINED ENV{JOYA_TEST_MODE})
+    set(DTS_EXTRA_CPPFLAGS "-DJOYA_TEST_MODE")
+endif()
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(joya)
+
+if(DEFINED ENV{JOYA_TEST_MODE})
+    target_compile_definitions(app PRIVATE JOYA_TEST_MODE)
+endif()
+
+# Inicialize Zephyr build system
+#find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 # Project name and version
 project(

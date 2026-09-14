@@ -19,6 +19,11 @@
 
 #define BLE_SETUP_TIMEOUT_MS 90000
 
+#define HAPTIC_READY_MAX_ATTEMPTS     3
+#define HAPTIC_READY_RETRY_MS         500
+// Max delay allowed: HAPTIC_READY_RETRY_MS * (HAPTIC_READY_MAX_ATTEMPTS - 1) = 1000ms
+
+
 typedef enum {
     STATE_UNPAIRED,
     STATE_SETUP_MODE,
@@ -56,7 +61,7 @@ typedef enum {
     EV_APP_FRIEND_EMERGENCY,
 
     // OTHER EVENTS
-    EV_NBM_READY,
+    // EV_NBM_READY,
 } event_type_t;
 
 /**
@@ -83,5 +88,8 @@ int add_event(event_type_t event);
  * @return The current application state.
  */
 app_state_t get_current_state(void);
+
+void haptics_play_when_ready(enum haptics_pattern pattern);
+
 
 #endif // APP_STATE_H

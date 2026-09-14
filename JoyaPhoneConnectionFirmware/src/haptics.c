@@ -10,6 +10,13 @@
 #error "Missing haptic_en_gpios property in /zephyr,user"
 #endif
 
+#ifdef JOYA_TEST_MODE
+
+static const struct gpio_dt_spec test_haptic_led =
+	GPIO_DT_SPEC_GET(DT_ALIAS(test_haptic_led), gpios);
+
+#endif
+
 static const struct gpio_dt_spec haptic_en =
 	GPIO_DT_SPEC_GET(HAPTIC_NODE, haptic_en_gpios);
 
@@ -316,7 +323,21 @@ int haptics_init(void)
 	int err;
 	uint8_t status = 0;
 
-	if (haptics_ready) {
+#ifdef JOYA_TEST_MODE
+
+	if (!gpio_is_ready_dt(&test_haptic_led)) {
+		return -ENODEV;
+	}
+
+	err = gpio_pin_configure_dt(&test_haptic_led, GPIO_OUTPUT_INACTIVE);
+	if (err) {
+		return err;
+	}
+
+	return 0;
+#else
+
+if (haptics_ready) {
 		return 0;
 	}
 
@@ -327,7 +348,7 @@ int haptics_init(void)
 	if (!gpio_is_ready_dt(&haptic_en)) {
 		return -ENODEV;
 	}
-
+	
 	err = gpio_pin_configure_dt(&haptic_en, GPIO_OUTPUT_ACTIVE);
 	if (err < 0) {
 		return err;
@@ -342,24 +363,24 @@ int haptics_init(void)
 
 	drv2605_addr = DRV2605_I2C_ADDR_LOW;
 	err = drv2605_probe_addr(drv2605_addr);
-
+	
 	if (err < 0) {
 		drv2605_addr = DRV2605_I2C_ADDR_HIGH;
 		err = drv2605_probe_addr(drv2605_addr);
 	}
-
+	
 	if (err < 0) {
 		(void)gpio_pin_set_dt(&haptic_en, 0);
 		return -ENODEV;
 	}
-
+	
 	(void)drv2605_read_reg(DRV2605_REG_STATUS, &status);
-
+	
 	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
 	if (err < 0) {
 		return err;
 	}
-
+	
 	// Note: 0x01 is the value used in the old firmware
 	err = drv2605_write_reg(DRV2605_REG_LIBRARY, 0x01);
 	if (err < 0) {
@@ -367,8 +388,10 @@ int haptics_init(void)
 	}
 
 	haptics_ready = true;
-
+	
 	return 0;
+
+#endif
 }
 
 /**
@@ -398,8 +421,11 @@ void haptics_play_effect(enum haptics_effect effect)
  */
 void haptics_play(enum haptics_pattern pattern)
 {
+#ifdef JOYA_TEST_MODE
+	gpio_pin_toggle_dt(&test_haptic_led);
+#else
 	if (!haptics_ready) {
-        // (improvement): decide what to do if haptics is not initialized (e.g., log error, return error, etc.)
+		// (improvement): decide what to do if haptics is not initialized (e.g., log error, return error, etc.)
         return;
     }
 	
@@ -407,13 +433,14 @@ void haptics_play(enum haptics_pattern pattern)
 		haptics_stop();
 		return;
 	}
-
+	
 	(void)k_work_cancel_delayable(&haptics_pattern_work);
-
+	
 	active_pattern = pattern;
 	active_step_index = 0;
-
+	
 	(void)k_work_schedule(&haptics_pattern_work, K_NO_WAIT);
+#endif
 }
 
 /**

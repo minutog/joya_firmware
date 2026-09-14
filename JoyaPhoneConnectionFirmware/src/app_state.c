@@ -1,5 +1,11 @@
 #include "app_state.h"
 
+static struct k_work_delayable haptic_ready_work;
+
+static enum haptics_pattern pending_haptic_pattern;
+static uint8_t haptic_ready_attempts;
+static bool haptic_pending;
+
 /** @brief Array of retry intervals for emergency events in milliseconds */
 const uint32_t EMERGENCY_RETRY_MS[] = {EMERGENCY_RETRY_INITIAL_MS, EMERGENCY_RETRY_FAST_MS, EMERGENCY_RETRY_MEDIUM_MS, EMERGENCY_RETRY_SLOW_MS, EMERGENCY_RETRY_VERY_SLOW_MS};
 /** @brief Current index for emergency retry intervals */
@@ -42,6 +48,51 @@ static void emergency_stop_alerts(void)
     emergency_alerts_active = false;
     k_work_cancel_delayable(&emergency_retry_work);
     reset_emergency_retry_index();
+}
+
+static void haptic_ready_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    if (!haptic_pending) {
+        return;
+    }
+
+    haptic_ready_attempts++;
+
+    if (is_nbm_ready()) {
+        haptic_pending = false;
+        haptics_play(pending_haptic_pattern);
+        return;
+    }
+
+    if (haptic_ready_attempts >= HAPTIC_READY_MAX_ATTEMPTS) {
+        /* RDY did not become available within 1 second */
+        haptic_pending = false;
+        return;
+    }
+
+    k_work_reschedule(&haptic_ready_work,
+                      K_MSEC(HAPTIC_READY_RETRY_MS));
+}
+
+void haptics_play_when_ready(enum haptics_pattern pattern)
+{
+    if (is_nbm_ready()) {
+        haptic_pending = false;
+        // Cancel any pending haptic ready work to avoid unnecessary retries
+        k_work_cancel_delayable(&haptic_ready_work);
+
+        haptics_play(pattern);
+        return;
+    }
+
+    pending_haptic_pattern = pattern;
+    haptic_ready_attempts = 1;
+    haptic_pending = true;
+
+    k_work_reschedule(&haptic_ready_work,
+                      K_MSEC(HAPTIC_READY_RETRY_MS));
 }
 
 
@@ -110,6 +161,7 @@ int add_event(event_type_t event)
 void fsm_thread_loop(void) {
     k_work_init_delayable(&emergency_retry_work, emergency_retry_work_handler);
     k_work_init_delayable(&connection_timeout_work, connection_timeout_work_handler);
+    k_work_init_delayable(&haptic_ready_work, haptic_ready_work_handler);
 
     event_type_t event;
     while (1) {
@@ -151,7 +203,7 @@ void process_event(event_type_t event) {
             // LOG: Failed to save emergency state in flash - continuing without saving
         }
 
-        haptics_play(HAPTICS_PATTERN_EMERGENCY_START);
+        haptics_play_when_ready(HAPTICS_PATTERN_EMERGENCY_START);
         // Note: haptics effect will be played even if the secure channel is not ready, as a warning to the user.
 
         if (current_state == STATE_AUTHENTICATED) {
@@ -216,7 +268,7 @@ void process_event(event_type_t event) {
                     // LOG: Failed to send ACK - continuing without sending
                 }
                 // LOG: Follow me event received
-                haptics_play(HAPTICS_PATTERN_FOLLOW_ME);
+                haptics_play_when_ready(HAPTICS_PATTERN_FOLLOW_ME);
                 return;
             
             case EV_APP_ACK_EMERGENCY:
@@ -286,7 +338,7 @@ void process_event(event_type_t event) {
                 // LOG: App authenticated - restarting alerts
                 current_state = STATE_AUTHENTICATED;
                 emergency_restart_alerts();
-                haptics_play(HAPTICS_PATTERN_EMERGENCY_START);
+                haptics_play_when_ready(HAPTICS_PATTERN_EMERGENCY_START);
 
                 return;
 
@@ -313,7 +365,7 @@ void process_event(event_type_t event) {
             if (event == EV_BTN_2_PULSE) {
                 // LOG: Entering setup mode (starting ADV)
                 current_state = STATE_SETUP_MODE;
-                haptics_play(HAPTICS_PATTERN_SETUP_MODE);
+                haptics_play_when_ready(HAPTICS_PATTERN_SETUP_MODE);
                 ble_start_setup_advertising(is_app_id_empty());
                 k_work_reschedule(&connection_timeout_work, K_MSEC(BLE_SETUP_TIMEOUT_MS)); 
             }
@@ -380,7 +432,7 @@ void process_event(event_type_t event) {
                         // LOG: Failed to send ACK - continuing without sending
                     }
 
-                    haptics_play(HAPTICS_PATTERN_ACK_CONNECTION);
+                    haptics_play_when_ready(HAPTICS_PATTERN_ACK_CONNECTION);
                     add_event(EV_APP_AUTHENTICATED);
                     return;
                     
@@ -420,7 +472,7 @@ void process_event(event_type_t event) {
             break;
 
         case STATE_AUTHENTICATED:
-            /* FOR TESTING */
+            /* FOR TESTING 
             if (event == EV_NBM_READY) {
                 if(is_nbm_ready()){
                     ret = ble_send_event_secure(0xAA);
@@ -431,12 +483,12 @@ void process_event(event_type_t event) {
                     // LOG: Failed to send NBM_READY - continuing without sending
                 }
             }
-            /* END FOR TESTING */
+            END FOR TESTING */
             
             // On this state, the device is connected and authenticated with the app. It can send and receive events.
             if (event == EV_APP_FRIEND_EMERGENCY){
                 // LOG: Friend emergency event received
-                haptics_play(HAPTICS_PATTERN_FRIEND_EMERGENCY);
+                haptics_play_when_ready(HAPTICS_PATTERN_FRIEND_EMERGENCY);
                 ret = ble_send_event_secure(COMMAND_ACK);
                 if(ret != 0){
                     // LOG: Failed to send ACK - continuing without sending
@@ -448,7 +500,7 @@ void process_event(event_type_t event) {
 
             } else if (event == EV_BTN_1_PULSE) {
                 // LOG: Routine start button pressed
-                haptics_play(HAPTICS_PATTERN_ROUTINE_START);
+                haptics_play_when_ready(HAPTICS_PATTERN_ROUTINE_START);
                 ret = ble_send_event_secure(COMMAND_ROUTINE);
                 if (ret != 0) {
                     // LOG: Failed to send COMMAND_ROUTINE - continuing without sending
@@ -456,7 +508,7 @@ void process_event(event_type_t event) {
 
             } else if (event == EV_BTN_LONG_PRESS) {
                 // LOG: Routine cancel button pressed
-                haptics_play(HAPTICS_PATTERN_ROUTINE_CANCEL);
+                haptics_play_when_ready(HAPTICS_PATTERN_ROUTINE_CANCEL);
                 ret = ble_send_event_secure(COMMAND_END_ROUTINE);
                 if (ret != 0) {
                     // LOG: Failed to send COMMAND_END_ROUTINE - continuing without sending

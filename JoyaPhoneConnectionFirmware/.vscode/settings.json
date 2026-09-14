@@ -2,7 +2,10 @@
   "files.associations": {
     "*.overlay": "dts"
   },
+
   "devicetree.defaultZephyrBase": "/home/fran/work/joya_workspace/zephyr_base",
   "devicetree.defaultBoard": "nrf52dk_nrf52832",
-  "devicetree.defaultBuildFolder": "${workspaceFolder}/build_joya"
+  "devicetree.defaultBuildFolder": "${workspaceFolder}/build_joya/app",
+
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build_joya/app/compile_commands.json"
 }
