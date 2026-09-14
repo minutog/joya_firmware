@@ -22,3 +22,6 @@ DerivedData/
 .vscode/settings.json
 .idea/
 JoyaPhoneConnectionFirmware/docker/JLink_Linux_*.deb
+
+# Others
+JoyaPhoneConnectionFirmware/docs/private_notes.md

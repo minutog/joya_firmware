@@ -140,7 +140,7 @@ void process_event(event_type_t event) {
             // LOG: Flash write failed while resetting flash storage - reseting only RAM state
         }
 
-        haptics_play_effect(HAPTICS_EFFECT_RESET);
+        haptics_play(HAPTICS_PATTERN_FACTORY_RESET);
         return;
     }
 
@@ -395,7 +395,7 @@ void process_event(event_type_t event) {
                             // LOG: Failed to send ACK - continuing without sending
                         }
                         add_event(EV_APP_AUTHENTICATED);
-                        haptics_play_effect(HAPTICS_EFFECT_AUTH);
+                        haptics_play(HAPTICS_PATTERN_ACK_CONNECTION);
                         return;
                     } else {
                         // LOG: APP_ID does not match stored APP_ID - sending NACK

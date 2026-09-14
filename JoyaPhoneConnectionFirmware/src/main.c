@@ -42,7 +42,7 @@ int main(void) {
          * Non-blocking startup check. If the haptic controller was detected,
          * schedule one short existing pattern without delaying BLE or OTA.
          */
-        haptics_play(HAPTICS_PATTERN_SETUP_MODE);
+        haptics_play(HAPTICS_PATTERN_ACK_CONNECTION);
     }
     
     // LOG: Initialization complete

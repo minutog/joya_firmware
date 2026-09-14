@@ -46,55 +46,64 @@ static const struct haptic_step pattern_setup_mode[] = {
 // struct haptic_step = [duration_ms, amplitude]
 static const struct haptic_step pattern_setup_mode[] = {
 	{ 700,  50 },
-	{ 500, 0 },
+	{ 100, 0 },
 };
 
 static const struct haptic_step pattern_ack_connection[] = {
-	{ 700, 50},
-	{ 500, 0},
-	{ 700, 50},
-	{ 500, 0},
+	{ 200, 50},
+	{ 100, 0},
+	{ 200, 50},
+	{ 100, 0},
+	{ 200, 50},
+	{ 100, 0},
 };
 
 static const struct haptic_step pattern_routine_start[] = {
 	{ 700,  50 },
-	{ 500,  0   },
+	{ 100,  0   },
 };
 
 static const struct haptic_step pattern_routine_cancel[] = {
-	{ 700, 50 },
-	{ 500, 0  },
-	{ 700, 50  },
-	{ 500, 0   },
+	{ 200, 50 },
+	{ 100, 0  },
+	{ 200, 50  },
+	{ 100, 0   },
 };
 
 static const struct haptic_step pattern_emergency_start[] = {
-	{ 110, 104 },
-	{ 100, 0   },
-	{ 150, 118 },
-	{ 260, 0   },
-	{ 110, 104 },
-	{ 100, 0   },
-	{ 150, 118 },
-	{ 260, 0   },
+	{ 2000, 50 },
+	{ 100, 0 },
 };
 
 static const struct haptic_step pattern_follow_me[] = {
-	{ 420, 92  },
-	{ 140, 0   },
-	{ 110, 112 },
+	{ 200, 50  },
 	{ 100, 0   },
-	{ 110, 112 },
-	{ 420, 0   },
+	{ 200, 50 },
+	{ 100, 0   },
 };
 
 static const struct haptic_step pattern_friend_emergency[] = {
-    { 180, 120 }, 
-	{ 120, 0 },
-    { 180, 120 }, 
-	{ 120, 0 },
-    { 600, 127 }, 
-	{ 400, 0 },
+    { 200, 50 }, 
+	{ 100, 0 },
+    { 200, 50 }, 
+	{ 350, 0 },
+    { 200, 50 }, 
+	{ 100, 0 },
+    { 200, 50 }, 
+	{ 350, 0 },
+	{ 200, 50 }, 
+	{ 100, 0 },
+    { 200, 50 }, 
+	{ 100, 0 },
+};
+
+static const struct haptic_step pattern_factory_reset[] = {
+	{ 200, 50},
+	{ 100, 0},
+	{ 200, 50},
+	{ 100, 0},
+	{ 200, 50},
+	{ 100, 0},
 };
 
 /**
@@ -245,6 +254,10 @@ static const struct haptic_step *get_pattern_steps(enum haptics_pattern pattern,
 	case HAPTICS_PATTERN_ACK_CONNECTION:
 		*step_count = ARRAY_SIZE(pattern_ack_connection);
 		return pattern_ack_connection;
+
+	case HAPTICS_PATTERN_FACTORY_RESET:
+		*step_count = ARRAY_SIZE(pattern_factory_reset);
+		return pattern_factory_reset;
 
 	case HAPTICS_PATTERN_NONE:
 	default:
