@@ -6,11 +6,6 @@ uint8_t current_retry_index = 0;
 
 static struct k_work_delayable connection_timeout_work;
 static struct k_work_delayable emergency_retry_work;
-static struct k_work_delayable haptic_ready_work;
-
-static enum haptics_pattern pending_haptic_pattern;
-static uint8_t haptic_ready_attempts;
-static bool haptic_pending;
 
 /** @brief Current application state */
 static volatile app_state_t current_state = STATE_UNPAIRED;
@@ -47,74 +42,6 @@ static void emergency_stop_alerts(void)
     k_work_cancel_delayable(&emergency_retry_work);
     reset_emergency_retry_index();
 }
-
-static void haptic_ready_work_handler(struct k_work *work)
-{
-    ARG_UNUSED(work);
-
-    if(!haptics_are_available()){
-        haptic_pending = false;
-        haptic_ready_attempts = 0;
-        return;
-    }
-    
-    if (!haptic_pending) {
-        return;
-    }
-
-    haptic_ready_attempts++;
-
-    if (is_nbm_ready()) {
-        int ret = nbm5100_set_active(true);
-        if(ret == 0){
-            haptic_pending = false;
-            haptic_ready_attempts = 0;
-            haptics_play(pending_haptic_pattern);
-            return;
-        }
-    }
-
-    if (haptic_ready_attempts >= HAPTIC_READY_MAX_ATTEMPTS) {
-        /* RDY did not become available within 1 second */
-        haptic_pending = false;
-        haptic_ready_attempts = 0;
-        return;
-    }
-
-    k_work_reschedule(&haptic_ready_work,
-                      K_MSEC(HAPTIC_READY_RETRY_MS));
-}
-
-void haptics_play_when_ready(enum haptics_pattern pattern)
-{
-    // Haptis initialization failed: ignore the vibration request
-    if(!haptics_are_available()){
-        haptic_pending = false;
-        haptic_ready_attempts = 0;
-        k_work_cancel_delayable(&haptic_ready_work);
-        return;
-    }
-
-    if (is_nbm_ready()) {
-        int ret = nbm5100_set_active(true);
-        if (ret == 0) {
-            haptic_pending = false;
-            haptic_ready_attempts = 0;
-            k_work_cancel_delayable(&haptic_ready_work);
-
-            haptics_play(pattern);
-            return;
-        }
-    }
-
-    pending_haptic_pattern = pattern;
-    haptic_ready_attempts = 1;
-    haptic_pending = true;
-
-    k_work_reschedule(&haptic_ready_work,
-                      K_MSEC(HAPTIC_READY_RETRY_MS));
-}
-
 
 /**
  * WORK HANDLERS
@@ -181,7 +108,6 @@ int add_event(event_type_t event)
 void fsm_thread_loop(void) {
     k_work_init_delayable(&emergency_retry_work, emergency_retry_work_handler);
     k_work_init_delayable(&connection_timeout_work, connection_timeout_work_handler);
-    k_work_init_delayable(&haptic_ready_work, haptic_ready_work_handler);
 
     event_type_t event;
     while (1) {

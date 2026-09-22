@@ -1,21 +1,23 @@
 #include "nbm5100.h"
 
 #include <zephyr/device.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <errno.h>
-#include "app_state.h"
 
 
 static const struct device *nbm_i2c = DEVICE_DT_GET(DT_NODELABEL(i2c0));
 static const struct gpio_dt_spec nbm_ready = GPIO_DT_SPEC_GET(DT_ALIAS(nbm_ready), gpios);
 
 static struct gpio_callback nbm_ready_cb_data;
-static volatile bool nbm_ready_flag = false;
+static atomic_t nbm_ready_flag = ATOMIC_INIT(0);
 
 
 
 bool is_nbm_ready(void) {
-    return nbm_ready_flag;
+    return atomic_get(&nbm_ready_flag) != 0;
 }
 
 static int nbm5100_configure_mode(void)
@@ -90,7 +92,7 @@ static void nbm_ready_isr(const struct device *port, struct gpio_callback *cb, u
         return;
     }
 
-    nbm_ready_flag = (level > 0);
+    atomic_set(&nbm_ready_flag, level > 0 ? 1 : 0);
 }
 
 
@@ -120,6 +122,7 @@ int nbm5100_init(void) {
 int nbm_ready_init(void)
 {
     int ret;
+    unsigned int key;
 
     if (!gpio_is_ready_dt(&nbm_ready)) {
         return -ENODEV;
@@ -130,14 +133,6 @@ int nbm_ready_init(void)
         return ret;
     }
 
-    /* Initialize software state with the actual pin level */
-    ret = gpio_pin_get_dt(&nbm_ready);
-    if (ret < 0) {
-        return ret;
-    }
-
-    nbm_ready_flag = (ret > 0);
-
     gpio_init_callback(&nbm_ready_cb_data, nbm_ready_isr, BIT(nbm_ready.pin));
 
     ret = gpio_add_callback(nbm_ready.port, &nbm_ready_cb_data);
@@ -146,8 +141,31 @@ int nbm_ready_init(void)
     }
 
     ret = gpio_pin_interrupt_configure_dt(&nbm_ready, GPIO_INT_EDGE_BOTH);
+    if (ret) {
+        (void)gpio_remove_callback(nbm_ready.port, &nbm_ready_cb_data);
+        return ret;
+    }
 
-    return ret;
+    /*
+     * Read the level after enabling the interrupt so an edge cannot be lost
+     * between the initial sample and interrupt setup. Keep local interrupts
+     * locked until the sampled value is stored: an edge occurring in this
+     * small window remains pending and the ISR refreshes the value afterward.
+     */
+    key = irq_lock();
+    ret = gpio_pin_get_dt(&nbm_ready);
+    if (ret >= 0) {
+        atomic_set(&nbm_ready_flag, ret > 0 ? 1 : 0);
+    }
+    irq_unlock(key);
+
+    if (ret < 0) {
+        (void)gpio_pin_interrupt_configure_dt(&nbm_ready, GPIO_INT_DISABLE);
+        (void)gpio_remove_callback(nbm_ready.port, &nbm_ready_cb_data);
+        return ret;
+    }
+
+    return 0;
 }
 
 

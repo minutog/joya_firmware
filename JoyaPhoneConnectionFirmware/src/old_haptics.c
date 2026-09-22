@@ -1,12 +1,21 @@
 #include "haptics.h"
-#include "drv2605.h"
-#include "nbm5100.h"
 
-#include <zephyr/kernel.h>
-#include <zephyr/sys/atomic.h>
+#define HAPTIC_NODE DT_PATH(zephyr_user)
 
-#define HAPTIC_READY_MAX_ATTEMPTS 3
-#define HAPTIC_READY_RETRY_MS     500
+#if !DT_NODE_EXISTS(HAPTIC_NODE)
+#error "Missing /zephyr,user node in overlay"
+#endif
+
+#if !DT_NODE_HAS_PROP(HAPTIC_NODE, haptic_en_gpios)
+#error "Missing haptic_en_gpios property in /zephyr,user"
+#endif
+
+
+static const struct gpio_dt_spec haptic_en =
+	GPIO_DT_SPEC_GET(HAPTIC_NODE, haptic_en_gpios);
+
+static const struct device *haptic_i2c =
+	DEVICE_DT_GET(DT_NODELABEL(i2c0));
 
 
 /* ============================================================
@@ -20,18 +29,14 @@ struct haptic_step {
 	uint8_t amplitude;
 };
 
+static uint16_t drv2605_addr;
+static bool haptics_ready;
+
 static enum haptics_pattern active_pattern = HAPTICS_PATTERN_NONE;
 static size_t active_step_index;
 
-static enum haptics_pattern pending_haptic_pattern;
-static uint8_t haptic_ready_attempts;
-static bool haptic_pending;
-
 static void haptics_pattern_work_handler(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(haptics_pattern_work, haptics_pattern_work_handler);
-
-static void haptics_ready_work_handler(struct k_work *work);
-static K_WORK_DELAYABLE_DEFINE(haptics_ready_work, haptics_ready_work_handler);
 /*
 static const struct haptic_step pattern_setup_mode[] = {
 	{ 80,  55 },
@@ -105,29 +110,83 @@ static const struct haptic_step pattern_factory_reset[] = {
 };
 
 /**
- * @brief Stop haptic playback, deactivate the NBM and reset pattern state.
- * @return 0 on success, or a negative error code if cleanup was incomplete.
+ * @brief Write one byte to a DRV2605 register.
+ * @param reg Register address to write.
+ * @param value Value to write into the register.
+ * @return 0 on success, or a negative error code on failure.
  */
-static int haptics_idle(void)
+static int drv2605_write_reg(uint8_t reg, uint8_t value)
 {
-	int drv_err;
-	int nbm_err;
+	// Create a buffer containing the register address followed by the value to write
+	uint8_t data[2] = { reg, value };
 
-	drv_err = drv2605_stop();
-	nbm_err = nbm5100_set_active(false);
+	return i2c_write(haptic_i2c, data, sizeof(data), drv2605_addr);
+}
 
-	/*
-	 * Always release the software state. A runtime I2C failure aborts only
-	 * the current vibration; a later request is allowed to try again.
-	 */
-	active_pattern = HAPTICS_PATTERN_NONE;
-	active_step_index = 0;
+/**
+ * @brief Read one byte from a DRV2605 register.
+ * @param reg Register address to read.
+ * @param value Output buffer for the register value.
+ * @return 0 on success, or a negative error code on failure.
+ */
+static int drv2605_read_reg(uint8_t reg, uint8_t *value)
+{
+	return i2c_reg_read_byte(haptic_i2c, drv2605_addr, reg, value);
+}
 
-	if (drv_err < 0) {
-		return drv_err;
+/**
+ * @brief Check whether a DRV2605 responds at an I2C address.
+ * @param addr I2C address to probe.
+ * @return 0 if the status register was read, or a negative error code on failure.
+ */
+static int drv2605_probe_addr(uint16_t addr)
+{
+	uint8_t status;
+
+	return i2c_reg_read_byte(haptic_i2c, addr, DRV2605_REG_STATUS, &status);
+}
+
+/**
+ * @brief Set the DRV2605 to real-time playback mode and apply an amplitude.
+ * @param amplitude Real-time playback amplitude to apply.
+ * @return 0 on success, or a negative error code on failure.
+ */
+static int drv2605_set_rtp(uint8_t amplitude)
+{
+	int err;
+
+	// Set the DRV2605 to real-time playback mode
+	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_RTP);
+	if (err < 0) {
+		return err;
 	}
 
-	return nbm_err;
+	// Write the amplitude to the RTP_INPUT register
+	err = drv2605_write_reg(DRV2605_REG_RTP_INPUT, amplitude);
+	if (err < 0) {
+		return err;
+	}
+
+	return 0;
+}
+
+/**
+ * @brief Stop real-time playback and reset the active pattern state.
+ */
+static void drv2605_idle(void)
+{
+	// Set the DRV2605 to internal trigger mode and turn off real-time playback
+	(void)drv2605_write_reg(DRV2605_REG_RTP_INPUT, HAPTIC_RTP_OFF);
+	(void)drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
+
+	int err = nbm5100_set_active(false);
+    if (err < 0) {
+        // TODO: decide fallback strategy
+    }
+
+	// Reset the active pattern state
+	active_pattern = HAPTICS_PATTERN_NONE;
+	active_step_index = 0;
 }
 
 
@@ -217,13 +276,13 @@ static void haptics_pattern_work_handler(struct k_work *work)
 	int err;
 
 	if (!get_next_step(&amplitude, &duration_ms)) {
-		(void)haptics_idle();
+		drv2605_idle();
 		return;
 	}
 
 	err = drv2605_set_rtp(amplitude);
 	if (err < 0) {
-		(void)haptics_idle();
+		drv2605_idle();
 		return;
 	}
 
@@ -231,162 +290,95 @@ static void haptics_pattern_work_handler(struct k_work *work)
 }
 
 /**
- * @brief Start a pattern after RDY and NBM Active were confirmed.
- * @param pattern Pattern to start.
- */
-static void haptics_start_pattern(enum haptics_pattern pattern)
-{
-	if (!drv2605_is_ready()) {
-		return;
-	}
-
-	active_pattern = pattern;
-	active_step_index = 0;
-
-	(void)k_work_schedule(&haptics_pattern_work, K_NO_WAIT);
-}
-
-/**
- * @brief Cancel a pending RDY wait and wait for its handler to finish.
- *
- * This function must be called from thread context, never from the RDY work
- * handler itself.
- */
-static void haptics_cancel_ready_wait(void)
-{
-	struct k_work_sync sync;
-
-	(void)k_work_cancel_delayable_sync(&haptics_ready_work, &sync);
-	haptic_pending = false;
-	haptic_ready_attempts = 0;
-}
-
-/**
- * @brief Cancel the active pattern scheduler and wait for its handler to finish.
- *
- * This stops only the scheduler. It does not wait for the complete pattern and
- * does not place the hardware in idle mode.
- */
-static void haptics_cancel_pattern_work(void)
-{
-	struct k_work_sync sync;
-
-	(void)k_work_cancel_delayable_sync(&haptics_pattern_work, &sync);
-}
-
-/**
- * @brief Retry a pending haptic request while waiting for NBM RDY.
- * @param work Work item associated with the RDY retry scheduler.
- */
-static void haptics_ready_work_handler(struct k_work *work)
-{
-	ARG_UNUSED(work);
-
-	if (!haptics_are_available()) {
-		haptic_pending = false;
-		haptic_ready_attempts = 0;
-		return;
-	}
-
-	if (!haptic_pending) {
-		return;
-	}
-
-	haptic_ready_attempts++;
-
-	if (is_nbm_ready()) {
-		int err = nbm5100_set_active(true);
-
-		if (err == 0) {
-			haptic_pending = false;
-			haptic_ready_attempts = 0;
-			haptics_start_pattern(pending_haptic_pattern);
-			return;
-		}
-
-		/*
-		 * The write result is uncertain: ACT may have reached the NBM even
-		 * though I2C reported an error. Try to return the hardware to idle
-		 * before retrying or abandoning this request.
-		 */
-		(void)haptics_idle();
-	}
-
-	if (haptic_ready_attempts >= HAPTIC_READY_MAX_ATTEMPTS) {
-		/* RDY did not become available within one second. */
-		haptic_pending = false;
-		haptic_ready_attempts = 0;
-		return;
-	}
-
-	(void)k_work_reschedule(&haptics_ready_work,
-				K_MSEC(HAPTIC_READY_RETRY_MS));
-}
-
-/**
  * PUBLIC API
  */
 
 /**
- * @brief Initialize the haptic controller.
+ * @brief Initialize the haptic enable GPIO and the DRV2605 controller.
  * @return 0 on success, or a negative error code on failure.
  */
 int haptics_init(void)
 {
-	return drv2605_init();
+	int err;
+	uint8_t status = 0;
+
+if (haptics_ready) {
+		return 0;
+	}
+
+	if (!device_is_ready(haptic_i2c)) {
+		return -ENODEV;
+	}
+
+	if (!gpio_is_ready_dt(&haptic_en)) {
+		return -ENODEV;
+	}
+	
+	err = gpio_pin_configure_dt(&haptic_en, GPIO_OUTPUT_ACTIVE);
+	if (err < 0) {
+		return err;
+	}
+
+	k_msleep(10);
+
+	err = i2c_recover_bus(haptic_i2c);
+	if (err < 0 && err != -ENOSYS) {
+		// (improvement): decide what to do if I2C bus recovery fails (e.g., retry, log error, etc.)
+	}
+
+	drv2605_addr = DRV2605_I2C_ADDR_LOW;
+	err = drv2605_probe_addr(drv2605_addr);
+	
+	if (err < 0) {
+		drv2605_addr = DRV2605_I2C_ADDR_HIGH;
+		err = drv2605_probe_addr(drv2605_addr);
+	}
+	
+	if (err < 0) {
+		(void)gpio_pin_set_dt(&haptic_en, 0);
+		return -ENODEV;
+	}
+	
+	(void)drv2605_read_reg(DRV2605_REG_STATUS, &status);
+	
+	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
+	if (err < 0) {
+		return err;
+	}
+	
+	// Note: 0x01 is the value used in the old firmware
+	err = drv2605_write_reg(DRV2605_REG_LIBRARY, 0x01);
+	if (err < 0) {
+		return err;
+	}
+
+	haptics_ready = true;
+	
+	return 0;
 }
 
 /**
- * @brief Request a haptic pattern after the NBM reports ready.
+ * @brief Start a haptic pattern from its first step.
  * @param pattern Pattern to play, or HAPTICS_PATTERN_NONE to stop playback.
  */
-void haptics_play_when_ready(enum haptics_pattern pattern)
+void haptics_play(enum haptics_pattern pattern)
 {
-	int err;
-	bool activation_failed = false;
-
+	if (!haptics_ready) {
+		// (improvement): decide what to do if haptics is not initialized (e.g., log error, return error, etc.)
+        return;
+    }
+	
 	if (pattern == HAPTICS_PATTERN_NONE) {
 		haptics_stop();
 		return;
 	}
-
-	if (!haptics_are_available()) {
-		haptics_cancel_ready_wait();
-		return;
-	}
-
-	/*
-	 * A new request preempts the previous one. Synchronous cancellation makes
-	 * sure an old handler cannot later modify or clear the new pattern state.
-	 */
-	haptics_cancel_ready_wait();
-	haptics_cancel_pattern_work();
-
-	if (is_nbm_ready()) {
-		err = nbm5100_set_active(true);
-
-		if (err == 0) {
-			haptics_start_pattern(pattern);
-			return;
-		}
-
-		activation_failed = true;
-	}
-
-	/*
-	 * The new pattern cannot start yet. Stop the preempted pattern so its last
-	 * RTP amplitude does not remain active while waiting for RDY.
-	 */
-	if (active_pattern != HAPTICS_PATTERN_NONE || activation_failed) {
-		(void)haptics_idle();
-	}
-
-	pending_haptic_pattern = pattern;
-	haptic_ready_attempts = 1;
-	haptic_pending = true;
-
-	(void)k_work_reschedule(&haptics_ready_work,
-				K_MSEC(HAPTIC_READY_RETRY_MS));
+	
+	(void)k_work_cancel_delayable(&haptics_pattern_work);
+	
+	active_pattern = pattern;
+	active_step_index = 0;
+	
+	(void)k_work_schedule(&haptics_pattern_work, K_NO_WAIT);
 }
 
 /**
@@ -394,11 +386,10 @@ void haptics_play_when_ready(enum haptics_pattern pattern)
  */
 void haptics_stop(void)
 {
-	haptics_cancel_ready_wait();
-	haptics_cancel_pattern_work();
+	(void)k_work_cancel_delayable(&haptics_pattern_work);
 
-	if (drv2605_is_ready()) {
-		(void)haptics_idle();
+	if (haptics_ready) {
+		drv2605_idle();
 	}
 }
 
@@ -408,7 +399,7 @@ void haptics_stop(void)
  */
 bool haptics_is_ready(void)
 {
-	return drv2605_is_ready();
+	return haptics_ready;
 }
 
 void haptics_set_available(bool available)

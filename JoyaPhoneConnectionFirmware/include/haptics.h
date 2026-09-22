@@ -1,28 +1,7 @@
 #ifndef HAPTICS_H
 #define HAPTICS_H
 
-#include <zephyr/device.h>
-#include <zephyr/drivers/gpio.h>
-#include <zephyr/drivers/i2c.h>
-#include <zephyr/kernel.h>
-#include <errno.h>
-#include <zephyr/sys/atomic.h>
-
-#include "nbm5100.h"
-
-#define DRV2605_I2C_ADDR_LOW			0x5A
-#define DRV2605_I2C_ADDR_HIGH			0x5B
-
-#define DRV2605_REG_STATUS				0x00
-#define DRV2605_REG_MODE				0x01
-#define DRV2605_REG_RTP_INPUT			0x02
-#define DRV2605_REG_LIBRARY				0x03
-
-#define DRV2605_MODE_INTERNAL_TRIGGER	0x00
-#define DRV2605_MODE_RTP				0x05
-
-#define HAPTIC_RTP_OFF					0
-#define HAPTIC_RTP_MAX					127
+#include <stdbool.h>
 
 enum haptics_pattern {
 	HAPTICS_PATTERN_NONE = 0,
@@ -31,36 +10,46 @@ enum haptics_pattern {
 	HAPTICS_PATTERN_ROUTINE_CANCEL,
 	HAPTICS_PATTERN_EMERGENCY_START,
 	HAPTICS_PATTERN_FOLLOW_ME,
-    HAPTICS_PATTERN_FRIEND_EMERGENCY,
+	HAPTICS_PATTERN_FRIEND_EMERGENCY,
 	HAPTICS_PATTERN_FACTORY_RESET,
 	HAPTICS_PATTERN_ACK_CONNECTION,
 };
 
 /**
- * @brief Initialize the haptic driver.
+ * @brief Initialize the haptic subsystem.
  * @return 0 on success, or a negative error code on failure.
  */
 int haptics_init(void);
 
 /**
- * @brief Stop the active haptic pattern or effect.
+ * @brief Request a haptic pattern after the NBM reports ready.
+ * @param pattern Pattern to play, or HAPTICS_PATTERN_NONE to stop playback.
+ * @note This function must be called from thread context.
+ */
+void haptics_play_when_ready(enum haptics_pattern pattern);
+
+/**
+ * @brief Stop the active haptic pattern.
+ * @note This function must be called from thread context.
  */
 void haptics_stop(void);
 
 /**
- * @brief Check whether the haptic driver is ready.
- * @return true if the haptic driver is ready, false otherwise.
+ * @brief Check whether the DRV2605 was initialized successfully.
+ * @return true if the controller is ready, otherwise false.
  */
 bool haptics_is_ready(void);
 
 /**
- * @brief Play a haptic pattern.
- * @param pattern The haptic pattern to play.
+ * @brief Set whether the complete haptic subsystem is available.
+ * @param available true when the NBM and DRV2605 can be used.
  */
-void haptics_play(enum haptics_pattern pattern);
-
 void haptics_set_available(bool available);
 
+/**
+ * @brief Check whether the complete haptic subsystem is available.
+ * @return true if haptic playback is available, otherwise false.
+ */
 bool haptics_are_available(void);
 
 #endif /* HAPTICS_H */
