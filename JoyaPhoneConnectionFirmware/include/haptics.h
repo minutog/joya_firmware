@@ -6,6 +6,9 @@
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/kernel.h>
 #include <errno.h>
+#include <zephyr/sys/atomic.h>
+
+#include "nbm5100.h"
 
 #define DRV2605_I2C_ADDR_LOW			0x5A
 #define DRV2605_I2C_ADDR_HIGH			0x5B
@@ -14,9 +17,6 @@
 #define DRV2605_REG_MODE				0x01
 #define DRV2605_REG_RTP_INPUT			0x02
 #define DRV2605_REG_LIBRARY				0x03
-#define DRV2605_REG_WAVESEQ1			0x04
-#define DRV2605_REG_WAVESEQ2			0x05
-#define DRV2605_REG_GO					0x0C
 
 #define DRV2605_MODE_INTERNAL_TRIGGER	0x00
 #define DRV2605_MODE_RTP				0x05
@@ -32,12 +32,8 @@ enum haptics_pattern {
 	HAPTICS_PATTERN_EMERGENCY_START,
 	HAPTICS_PATTERN_FOLLOW_ME,
     HAPTICS_PATTERN_FRIEND_EMERGENCY,
+	HAPTICS_PATTERN_FACTORY_RESET,
 	HAPTICS_PATTERN_ACK_CONNECTION,
-};
-
-enum haptics_effect {
-    HAPTICS_EFFECT_AUTH = 0x01,
-    HAPTICS_EFFECT_RESET = 0x2F,
 };
 
 /**
@@ -63,10 +59,8 @@ bool haptics_is_ready(void);
  */
 void haptics_play(enum haptics_pattern pattern);
 
-/**
- * @brief Play one haptic effect.
- * @param effect The haptic effect to play.
- */
-void haptics_play_effect(enum haptics_effect effect);
+void haptics_set_available(bool available);
+
+bool haptics_are_available(void);
 
 #endif /* HAPTICS_H */

@@ -10,12 +10,6 @@
 #error "Missing haptic_en_gpios property in /zephyr,user"
 #endif
 
-#ifdef JOYA_TEST_MODE
-
-static const struct gpio_dt_spec test_haptic_led =
-	GPIO_DT_SPEC_GET(DT_ALIAS(test_haptic_led), gpios);
-
-#endif
 
 static const struct gpio_dt_spec haptic_en =
 	GPIO_DT_SPEC_GET(HAPTIC_NODE, haptic_en_gpios);
@@ -27,6 +21,8 @@ static const struct device *haptic_i2c =
 /* ============================================================
  * Internal state
  * ============================================================ */
+
+static atomic_t haptics_available = ATOMIC_INIT(0);
 
 struct haptic_step {
 	uint16_t duration_ms;
@@ -53,55 +49,64 @@ static const struct haptic_step pattern_setup_mode[] = {
 // struct haptic_step = [duration_ms, amplitude]
 static const struct haptic_step pattern_setup_mode[] = {
 	{ 700,  50 },
-	{ 500, 0 },
+	{ 100, 0 },
 };
 
 static const struct haptic_step pattern_ack_connection[] = {
-	{ 700, 50},
-	{ 500, 0},
-	{ 700, 50},
-	{ 500, 0},
+	{ 200, 50},
+	{ 100, 0},
+	{ 200, 50},
+	{ 100, 0},
+	{ 200, 50},
+	{ 100, 0},
 };
 
 static const struct haptic_step pattern_routine_start[] = {
 	{ 700,  50 },
-	{ 500,  0   },
+	{ 100,  0   },
 };
 
 static const struct haptic_step pattern_routine_cancel[] = {
-	{ 700, 50 },
-	{ 500, 0  },
-	{ 700, 50  },
-	{ 500, 0   },
+	{ 200, 50 },
+	{ 100, 0  },
+	{ 200, 50  },
+	{ 100, 0   },
 };
 
 static const struct haptic_step pattern_emergency_start[] = {
-	{ 110, 104 },
-	{ 100, 0   },
-	{ 150, 118 },
-	{ 260, 0   },
-	{ 110, 104 },
-	{ 100, 0   },
-	{ 150, 118 },
-	{ 260, 0   },
+	{ 2000, 50 },
+	{ 100, 0 },
 };
 
 static const struct haptic_step pattern_follow_me[] = {
-	{ 420, 92  },
-	{ 140, 0   },
-	{ 110, 112 },
+	{ 200, 50  },
 	{ 100, 0   },
-	{ 110, 112 },
-	{ 420, 0   },
+	{ 200, 50 },
+	{ 100, 0   },
 };
 
 static const struct haptic_step pattern_friend_emergency[] = {
-    { 180, 120 }, 
-	{ 120, 0 },
-    { 180, 120 }, 
-	{ 120, 0 },
-    { 600, 127 }, 
-	{ 400, 0 },
+    { 200, 50 }, 
+	{ 100, 0 },
+    { 200, 50 }, 
+	{ 350, 0 },
+    { 200, 50 }, 
+	{ 100, 0 },
+    { 200, 50 }, 
+	{ 350, 0 },
+	{ 200, 50 }, 
+	{ 100, 0 },
+    { 200, 50 }, 
+	{ 100, 0 },
+};
+
+static const struct haptic_step pattern_factory_reset[] = {
+	{ 200, 50},
+	{ 100, 0},
+	{ 200, 50},
+	{ 100, 0},
+	{ 200, 50},
+	{ 100, 0},
 };
 
 /**
@@ -174,46 +179,16 @@ static void drv2605_idle(void)
 	(void)drv2605_write_reg(DRV2605_REG_RTP_INPUT, HAPTIC_RTP_OFF);
 	(void)drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
 
+	int err = nbm5100_set_active(false);
+    if (err < 0) {
+        // TODO: decide fallback strategy
+    }
+
 	// Reset the active pattern state
 	active_pattern = HAPTICS_PATTERN_NONE;
 	active_step_index = 0;
 }
 
-/**
- * @brief Load and trigger an effect from the DRV2605 waveform library.
- * @param effect Waveform library effect identifier.
- * @return 0 on success, or a negative error code on failure.
- */
-static int drv2605_play_effect(uint8_t effect)
-{
-	int err;
-
-	// Load the effect into the first waveform sequence slot
-	err = drv2605_write_reg(DRV2605_REG_WAVESEQ1, effect);
-	if (err < 0) {
-		return err;
-	}
-
-	// Indicate that there are no additional effects in the sequence
-	err = drv2605_write_reg(DRV2605_REG_WAVESEQ2, 0x00);
-	if (err < 0) {
-		return err;
-	}
-
-	// Set the DRV2605 to internal trigger mode and start playback
-	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
-	if (err < 0) {
-		return err;
-	}
-
-	// Trigger the effect by writing to the GO register
-	err = drv2605_write_reg(DRV2605_REG_GO, 0x01);
-	if (err < 0) {
-		return err;
-	}
-
-	return 0;
-}
 
 /**
  * @brief Get the step sequence associated with a haptic pattern.
@@ -252,6 +227,10 @@ static const struct haptic_step *get_pattern_steps(enum haptics_pattern pattern,
 	case HAPTICS_PATTERN_ACK_CONNECTION:
 		*step_count = ARRAY_SIZE(pattern_ack_connection);
 		return pattern_ack_connection;
+
+	case HAPTICS_PATTERN_FACTORY_RESET:
+		*step_count = ARRAY_SIZE(pattern_factory_reset);
+		return pattern_factory_reset;
 
 	case HAPTICS_PATTERN_NONE:
 	default:
@@ -323,20 +302,6 @@ int haptics_init(void)
 	int err;
 	uint8_t status = 0;
 
-#ifdef JOYA_TEST_MODE
-
-	if (!gpio_is_ready_dt(&test_haptic_led)) {
-		return -ENODEV;
-	}
-
-	err = gpio_pin_configure_dt(&test_haptic_led, GPIO_OUTPUT_INACTIVE);
-	if (err) {
-		return err;
-	}
-
-	return 0;
-#else
-
 if (haptics_ready) {
 		return 0;
 	}
@@ -390,29 +355,6 @@ if (haptics_ready) {
 	haptics_ready = true;
 	
 	return 0;
-
-#endif
-}
-
-/**
- * @brief Cancel the active pattern and trigger one waveform library effect.
- * @param effect Effect to play.
- */
-void haptics_play_effect(enum haptics_effect effect)
-{
-    if (!haptics_ready) {
-        return;
-    }
-
-    (void)k_work_cancel_delayable(&haptics_pattern_work);
-
-    active_pattern = HAPTICS_PATTERN_NONE;
-    active_step_index = 0;
-
-    int err = drv2605_play_effect((uint8_t)effect);
-    if (err < 0) {
-        // (improvement): decide what to do if playing effect fails (e.g., retry, log error, etc.)
-    }
 }
 
 /**
@@ -421,9 +363,6 @@ void haptics_play_effect(enum haptics_effect effect)
  */
 void haptics_play(enum haptics_pattern pattern)
 {
-#ifdef JOYA_TEST_MODE
-	gpio_pin_toggle_dt(&test_haptic_led);
-#else
 	if (!haptics_ready) {
 		// (improvement): decide what to do if haptics is not initialized (e.g., log error, return error, etc.)
         return;
@@ -440,7 +379,6 @@ void haptics_play(enum haptics_pattern pattern)
 	active_step_index = 0;
 	
 	(void)k_work_schedule(&haptics_pattern_work, K_NO_WAIT);
-#endif
 }
 
 /**
@@ -462,4 +400,14 @@ void haptics_stop(void)
 bool haptics_is_ready(void)
 {
 	return haptics_ready;
+}
+
+void haptics_set_available(bool available)
+{
+    atomic_set(&haptics_available, available ? 1 : 0);
+}
+
+bool haptics_are_available(void)
+{
+    return atomic_get(&haptics_available) != 0;
 }

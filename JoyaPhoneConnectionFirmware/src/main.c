@@ -32,19 +32,16 @@ int main(void) {
         return -1;
     }
 
-    nbm_ready_init();
-    ret = haptics_init();
-    if (ret < 0) {
-        // LOG: Haptics initialization failed - continuing without haptics
-        // (improvement): decide what to do if haptics initialization fails (e.g., retry, log error, etc.)
-    } else {
-        /*
-         * Non-blocking startup check. If the haptic controller was detected,
-         * schedule one short existing pattern without delaying BLE or OTA.
-         */
-        // Removed because haptic_ready_work is now inicialized in fsm_thread_loop()
-        // haptics_play_when_ready(HAPTICS_PATTERN_SETUP_MODE);
-    }
+    
+    int nbm_rdy_err = nbm_ready_init();
+    int nbm_err = nbm5100_init();
+    int drv_err = haptics_init();
+
+    bool all_initialized = nbm_rdy_err == 0 && nbm_err == 0 && drv_err == 0;
+    haptics_set_available(all_initialized);
+
+    // Error treatment (TO DO)
+
     
     // LOG: Initialization complete
 

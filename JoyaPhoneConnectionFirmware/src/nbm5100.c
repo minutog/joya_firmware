@@ -8,9 +8,6 @@
 
 static const struct device *nbm_i2c = DEVICE_DT_GET(DT_NODELABEL(i2c0));
 static const struct gpio_dt_spec nbm_ready = GPIO_DT_SPEC_GET(DT_ALIAS(nbm_ready), gpios);
-#ifdef JOYA_TEST_MODE
-static const struct gpio_dt_spec test_ready_led = GPIO_DT_SPEC_GET(DT_ALIAS(test_ready_led), gpios);
-#endif
 
 static struct gpio_callback nbm_ready_cb_data;
 static volatile bool nbm_ready_flag = false;
@@ -21,9 +18,65 @@ bool is_nbm_ready(void) {
     return nbm_ready_flag;
 }
 
-static int nbm5100_configure_mode(void) {
-    // Implement the configuration of the NBM5100 mode here
-    // This is a placeholder for the actual implementation
+static int nbm5100_configure_mode(void)
+{
+    int ret;
+
+    // set1: vfix3, vfix2, vfix1, vfix0, vset3, vset2, vset1, vset0
+    uint8_t set1 =
+        FIELD_PREP(NBM5100_SET1_VFIX_MASK, NBM5100_VFIX_3V84) |
+        FIELD_PREP(NBM5100_SET1_VSET_MASK, NBM5100_VSET_3V4);
+
+    // set2: ich2, ich1, ich0, vdhhiz, -, vmin2, vmin1, vmin0 
+    uint8_t set2 =
+        FIELD_PREP(NBM5100_SET2_ICH_MASK, NBM5100_ICH_4MA) |
+        FIELD_PREP(NBM5100_SET2_VMIN_MASK, NBM5100_VMIN_3V2);
+
+    /* Disable optimizer: profile = 0 */
+    ret = nbm5100_write_reg(NBM5100_REG_PROFILE, 0x00);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* VFIX = 3.84 V, VSET = 3.4 V */
+    ret = nbm5100_write_reg(NBM5100_REG_SET1, set1);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* ICH = 4 mA, VDHHIZ = 0, VMIN = 3.2 V */
+    ret = nbm5100_write_reg(NBM5100_REG_SET2, set2);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Auto mode disabled */
+    ret = nbm5100_write_reg(NBM5100_REG_SET3, 0x00);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /*
+     * VCAPMAX = 4.95 V (valor binario 0)
+     * Capacitor balancing disabled
+     */
+    // set4: bal_mode1, bal_mode0, enbal, vcapmax, -,-,-,-
+    ret = nbm5100_write_reg(NBM5100_REG_SET4, 0x00);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /*
+     * Continuous mode:
+     * ACT = 0
+     * ECM = 1
+     * EOD = 0
+     */
+    ret = nbm5100_write_reg(NBM5100_REG_COMMAND, NBM5100_CMD_ECM);
+    if (ret < 0) {
+        return ret;
+    }
+
     return 0;
 }
 
@@ -38,9 +91,6 @@ static void nbm_ready_isr(const struct device *port, struct gpio_callback *cb, u
     }
 
     nbm_ready_flag = (level > 0);
-#ifdef JOYA_TEST_MODE
-    gpio_pin_set_dt(&test_ready_led, nbm_ready_flag);
-#endif
 }
 
 
@@ -49,6 +99,14 @@ int nbm5100_init(void) {
     if (!device_is_ready(nbm_i2c)) {
         // Error treatment
         return -ENODEV;
+    }
+
+    k_msleep(20); // datasheet requirement
+
+    /* Recover the shared bus before the first NBM configuration transfer. */
+    err = i2c_recover_bus(nbm_i2c);
+    if (err < 0 && err != -ENOSYS) {
+        return err;
     }
 
     err = nbm5100_configure_mode();
@@ -62,17 +120,6 @@ int nbm5100_init(void) {
 int nbm_ready_init(void)
 {
     int ret;
-
-#ifdef JOYA_TEST_MODE
-    if (!gpio_is_ready_dt(&test_ready_led)) {
-        return -ENODEV;
-    }
-
-    ret = gpio_pin_configure_dt(&test_ready_led, GPIO_OUTPUT_INACTIVE);
-    if (ret) {
-        return ret;
-    }
-#endif
 
     if (!gpio_is_ready_dt(&nbm_ready)) {
         return -ENODEV;
@@ -90,9 +137,6 @@ int nbm_ready_init(void)
     }
 
     nbm_ready_flag = (ret > 0);
-#ifdef JOYA_TEST_MODE
-    gpio_pin_set_dt(&test_ready_led, nbm_ready_flag);
-#endif
 
     gpio_init_callback(&nbm_ready_cb_data, nbm_ready_isr, BIT(nbm_ready.pin));
 
@@ -126,13 +170,29 @@ int nbm5100_read_reg(uint8_t reg, uint8_t *value) {
 int nbm5100_write_reg(uint8_t reg, uint8_t value)
 {
     uint8_t buf[2] = {reg, value};
+    int err;
 
-    int err = i2c_write(nbm_i2c, buf, sizeof(buf), NBM5100_I2C_ADDR);
+    for (int attempt = 0; attempt < NBM5100_I2C_MAX_RETRIES; attempt++) {
 
-    if (err) {
-        // Error treatment
-        return err;
+        err = i2c_write(nbm_i2c, buf, sizeof(buf), NBM5100_I2C_ADDR);
+
+        if (err == 0) {
+            return 0;
+        }
+
+        k_msleep(NBM5100_I2C_RETRY_DELAY_MS);
     }
 
-    return 0;
+    return err;
+}
+
+int nbm5100_set_active(bool active)
+{
+    uint8_t command = NBM5100_CMD_ECM;
+
+    if (active) {
+        command |= NBM5100_CMD_ACT;
+    }
+
+    return nbm5100_write_reg(NBM5100_REG_COMMAND, command);
 }

@@ -1,18 +1,16 @@
 #include "app_state.h"
 
+/** @brief Array of retry intervals for emergency events in milliseconds */
+const uint32_t EMERGENCY_RETRY_MS[] = {EMERGENCY_RETRY_INITIAL_MS, EMERGENCY_RETRY_FAST_MS, EMERGENCY_RETRY_MEDIUM_MS, EMERGENCY_RETRY_SLOW_MS, EMERGENCY_RETRY_VERY_SLOW_MS};
+uint8_t current_retry_index = 0;
+
+static struct k_work_delayable connection_timeout_work;
+static struct k_work_delayable emergency_retry_work;
 static struct k_work_delayable haptic_ready_work;
 
 static enum haptics_pattern pending_haptic_pattern;
 static uint8_t haptic_ready_attempts;
 static bool haptic_pending;
-
-/** @brief Array of retry intervals for emergency events in milliseconds */
-const uint32_t EMERGENCY_RETRY_MS[] = {EMERGENCY_RETRY_INITIAL_MS, EMERGENCY_RETRY_FAST_MS, EMERGENCY_RETRY_MEDIUM_MS, EMERGENCY_RETRY_SLOW_MS, EMERGENCY_RETRY_VERY_SLOW_MS};
-/** @brief Current index for emergency retry intervals */
-uint8_t current_retry_index = 0;
-
-static struct k_work_delayable connection_timeout_work;
-static struct k_work_delayable emergency_retry_work;
 
 /** @brief Current application state */
 static volatile app_state_t current_state = STATE_UNPAIRED;
@@ -54,6 +52,12 @@ static void haptic_ready_work_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
 
+    if(!haptics_are_available()){
+        haptic_pending = false;
+        haptic_ready_attempts = 0;
+        return;
+    }
+    
     if (!haptic_pending) {
         return;
     }
@@ -61,14 +65,19 @@ static void haptic_ready_work_handler(struct k_work *work)
     haptic_ready_attempts++;
 
     if (is_nbm_ready()) {
-        haptic_pending = false;
-        haptics_play(pending_haptic_pattern);
-        return;
+        int ret = nbm5100_set_active(true);
+        if(ret == 0){
+            haptic_pending = false;
+            haptic_ready_attempts = 0;
+            haptics_play(pending_haptic_pattern);
+            return;
+        }
     }
 
     if (haptic_ready_attempts >= HAPTIC_READY_MAX_ATTEMPTS) {
         /* RDY did not become available within 1 second */
         haptic_pending = false;
+        haptic_ready_attempts = 0;
         return;
     }
 
@@ -78,13 +87,24 @@ static void haptic_ready_work_handler(struct k_work *work)
 
 void haptics_play_when_ready(enum haptics_pattern pattern)
 {
-    if (is_nbm_ready()) {
+    // Haptis initialization failed: ignore the vibration request
+    if(!haptics_are_available()){
         haptic_pending = false;
-        // Cancel any pending haptic ready work to avoid unnecessary retries
+        haptic_ready_attempts = 0;
         k_work_cancel_delayable(&haptic_ready_work);
-
-        haptics_play(pattern);
         return;
+    }
+
+    if (is_nbm_ready()) {
+        int ret = nbm5100_set_active(true);
+        if (ret == 0) {
+            haptic_pending = false;
+            haptic_ready_attempts = 0;
+            k_work_cancel_delayable(&haptic_ready_work);
+
+            haptics_play(pattern);
+            return;
+        }
     }
 
     pending_haptic_pattern = pattern;
@@ -192,7 +212,7 @@ void process_event(event_type_t event) {
             // LOG: Flash write failed while resetting flash storage - reseting only RAM state
         }
 
-        haptics_play_effect(HAPTICS_EFFECT_RESET);
+        haptics_play_when_ready(HAPTICS_PATTERN_FACTORY_RESET);
         return;
     }
 
@@ -447,7 +467,7 @@ void process_event(event_type_t event) {
                             // LOG: Failed to send ACK - continuing without sending
                         }
                         add_event(EV_APP_AUTHENTICATED);
-                        haptics_play_effect(HAPTICS_EFFECT_AUTH);
+                        haptics_play_when_ready(HAPTICS_PATTERN_ACK_CONNECTION);
                         return;
                     } else {
                         // LOG: APP_ID does not match stored APP_ID - sending NACK
@@ -471,20 +491,7 @@ void process_event(event_type_t event) {
             }
             break;
 
-        case STATE_AUTHENTICATED:
-            /* FOR TESTING 
-            if (event == EV_NBM_READY) {
-                if(is_nbm_ready()){
-                    ret = ble_send_event_secure(0xAA);
-                } else {
-                    ret = ble_send_event_secure(0xBB);
-                }
-                if(ret != 0){
-                    // LOG: Failed to send NBM_READY - continuing without sending
-                }
-            }
-            END FOR TESTING */
-            
+        case STATE_AUTHENTICATED:            
             // On this state, the device is connected and authenticated with the app. It can send and receive events.
             if (event == EV_APP_FRIEND_EMERGENCY){
                 // LOG: Friend emergency event received
