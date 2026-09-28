@@ -32,6 +32,7 @@ static int nbm5100_configure_mode(void)
     // set2: ich2, ich1, ich0, vdhhiz, -, vmin2, vmin1, vmin0 
     uint8_t set2 =
         FIELD_PREP(NBM5100_SET2_ICH_MASK, NBM5100_ICH_4MA) |
+        NBM5100_SET2_VDHHIZ |
         FIELD_PREP(NBM5100_SET2_VMIN_MASK, NBM5100_VMIN_3V2);
 
     /* Disable optimizer: profile = 0 */
@@ -46,7 +47,7 @@ static int nbm5100_configure_mode(void)
         return ret;
     }
 
-    /* ICH = 4 mA, VDHHIZ = 0, VMIN = 3.2 V */
+    /* ICH = 4 mA, VDHHIZ = 1, VMIN = 3.2 V */
     ret = nbm5100_write_reg(NBM5100_REG_SET2, set2);
     if (ret < 0) {
         return ret;

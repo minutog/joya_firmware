@@ -5,7 +5,7 @@
 		group1 {
 			psels = <NRF_PSEL(TWIM_SDA, 0, 8)>,
 				<NRF_PSEL(TWIM_SCL, 0, 6)>;
-				// 26-27 for development
+				// 26-27 for development / 8-6 for production
 
 			/*
 			* Joya PCB rev. actual has no external I2C pull-up resistors.

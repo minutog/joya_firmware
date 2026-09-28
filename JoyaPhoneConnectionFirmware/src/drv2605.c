@@ -30,6 +30,7 @@
 
 #define DRV2605_MODE_INTERNAL_TRIGGER    0x00
 #define DRV2605_MODE_RTP                 0x05
+#define DRV2605_MODE_STANDBY_INTERNAL_TRIGGER	(BIT(6) | DRV2605_MODE_INTERNAL_TRIGGER)
 
 #define DRV2605_RTP_OFF                  0
 
@@ -97,7 +98,6 @@ static int drv2605_probe_addr(uint16_t addr)
 int drv2605_init(void)
 {
 	int err;
-	uint8_t status = 0;
 
 	if (drv2605_ready) {
 		return 0;
@@ -136,16 +136,14 @@ int drv2605_init(void)
 		return -ENODEV;
 	}
 
-	(void)drv2605_read_reg(DRV2605_REG_STATUS, &status);
+
+	err = drv2605_write_reg(DRV2605_REG_RTP_INPUT, DRV2605_RTP_OFF);
+    if (err < 0) {
+        return err;
+    }
 
 	err = drv2605_write_reg(DRV2605_REG_MODE,
-				DRV2605_MODE_INTERNAL_TRIGGER);
-	if (err < 0) {
-		return err;
-	}
-
-	/* 0x01 is the library selected by the previous firmware. */
-	err = drv2605_write_reg(DRV2605_REG_LIBRARY, 0x01);
+				DRV2605_MODE_STANDBY_INTERNAL_TRIGGER);
 	if (err < 0) {
 		return err;
 	}
@@ -184,7 +182,7 @@ int drv2605_stop(void)
 	rtp_err = drv2605_write_reg(DRV2605_REG_RTP_INPUT,
 				    DRV2605_RTP_OFF);
 	mode_err = drv2605_write_reg(DRV2605_REG_MODE,
-				     DRV2605_MODE_INTERNAL_TRIGGER);
+				     DRV2605_MODE_STANDBY_INTERNAL_TRIGGER);
 
 	if (rtp_err < 0) {
 		return rtp_err;
