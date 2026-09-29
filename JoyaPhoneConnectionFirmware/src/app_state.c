@@ -131,13 +131,17 @@ void process_event(event_type_t event) {
     if (event == EV_BTN_FACTORY_RESET) {
         // LOG: Factory reset button pressed - resetting device
         current_state = STATE_UNPAIRED;
-        ble_disconnect();
-        ret = storage_factory_reset();
-        emergency_stop_alerts();
-        if(ret == 1) {
-            // LOG: Flash write failed while resetting flash storage - reseting only RAM state
+        ret = ble_disconnect();
+        if (ret != 0) {
+            // LOG: Failed to disconnect BLE - continuing without disconnecting
         }
 
+        ret = storage_factory_reset();
+        if(ret != 0) {
+            // LOG: Flash write failed while resetting flash storage - reseting only RAM state
+        }
+        
+        emergency_stop_alerts();
         haptics_play_when_ready(HAPTICS_PATTERN_FACTORY_RESET);
         return;
     }
@@ -145,12 +149,13 @@ void process_event(event_type_t event) {
     if (event == EV_BTN_EMERGENCY) {
         // LOG: Emergency button pressed
         ret = storage_save_emergency_state(true);
-        if (ret == 1) {
+        if (ret != 0) {
             // LOG: Failed to save emergency state in flash - continuing without saving
         }
 
         haptics_play_when_ready(HAPTICS_PATTERN_EMERGENCY_START);
         // Note: haptics effect will be played even if the secure channel is not ready, as a warning to the user.
+        // REVIEW (!)
 
         if (current_state == STATE_AUTHENTICATED) {
             // LOG: Sending emergency
@@ -163,13 +168,27 @@ void process_event(event_type_t event) {
         reset_emergency_retry_index();
 
         if (current_state == STATE_BONDED_DISCONNECTED) {
-            ble_start_setup_advertising(false);
+            ret = ble_start_setup_advertising(false);
+            if (ret != 0) {
+                // LOG: Failed to start advertising - continuing without advertising
+                // REVIEW (!) [FAIL ADV]
+            }
         } else if (current_state == STATE_UNPAIRED && !is_app_id_empty()) {
             current_state = STATE_BONDED_DISCONNECTED;
-            ble_start_setup_advertising(false);
+            ret = ble_start_setup_advertising(false);
+            if (ret != 0) {
+                // LOG: Failed to start advertising - continuing without advertising
+                // REVIEW (!) [FAIL ADV]
+            }
         } else if (current_state == STATE_UNPAIRED && is_app_id_empty()) {
-            current_state = STATE_SETUP_MODE;
-            ble_start_setup_advertising(true);
+            ret = ble_start_setup_advertising(true);
+            if (ret != 0) {
+                // LOG: Failed to start advertising - continuing without advertising
+                // REVIEW (!) [FAIL ADV]
+                current_state = STATE_UNPAIRED; // JUST FOR NOW
+            } else {
+                current_state = STATE_SETUP_MODE;
+            }
         }
 
         return;
@@ -200,6 +219,7 @@ void process_event(event_type_t event) {
                 ret = ble_send_event_secure(COMMAND_EMERGENCY);
                 if (ret != 0) {
                     // LOG: Failed to resend COMMAND_EMERGENCY - continuing
+                    // REVIEW (!) [IT WILL RETRY AGAIN IN THE NEXT SCHEDULED RETRY]
                 }
 
                 emergency_schedule_next_retry();
@@ -212,6 +232,7 @@ void process_event(event_type_t event) {
                 ret = ble_send_event_secure(COMMAND_ACK);
                 if(ret != 0){
                     // LOG: Failed to send ACK - continuing without sending
+                    // CRITICAL: REVIEW (!)
                 }
                 // LOG: Follow me event received
                 haptics_play_when_ready(HAPTICS_PATTERN_FOLLOW_ME);
@@ -227,6 +248,7 @@ void process_event(event_type_t event) {
                 ret = ble_send_event_secure(COMMAND_ACK);
                 if(ret != 0){
                     // LOG: Failed to send ACK - continuing without sending
+                    // CRITICAL: REVIEW (!)
                 }
                 return;
 
@@ -238,12 +260,13 @@ void process_event(event_type_t event) {
                 // LOG: Stop emergency event received
                 emergency_stop_alerts();
                 ret = storage_save_emergency_state(false);
-                if (ret == 1) {
+                if (ret != 0) {
                     // LOG: Failed to save emergency state in flash - continuing without saving
                 }
                 ret = ble_send_event_secure(COMMAND_ACK);
                 if(ret != 0){
                     // LOG: Failed to send ACK - continuing without sending
+                    // CRITICAL: REVIEW (!)
                 }
                 return;
 
@@ -251,12 +274,24 @@ void process_event(event_type_t event) {
                 // LOG: BLE timeout
                 if (is_app_id_empty()) {
                     // LOG: No APP_ID stored - entering setup mode (starting ADV)
-                    current_state = STATE_SETUP_MODE;
-                    ble_start_setup_advertising(true);
+                    ret = ble_start_setup_advertising(true);
+                    if (ret != 0) {
+                        // LOG: Failed to start advertising - continuing without advertising
+                        // CRITICAL: TO BE VALIDATED (!)
+                        k_work_reschedule(&connection_timeout_work, K_MSEC(BLE_ADV_RETRY_MS));
+                    } else {
+                        current_state = STATE_SETUP_MODE;
+                    }
                 } else {
                     // LOG: APP_ID stored - entering bonded disconnected state (starting ADV)
-                    current_state = STATE_BONDED_DISCONNECTED;
-                    ble_start_setup_advertising(false);
+                    ret = ble_start_setup_advertising(false);
+                    if (ret != 0) {
+                        // LOG: Failed to start advertising - continuing without advertising
+                        // CRITICAL: TO BE VALIDATED (!)
+                        k_work_reschedule(&connection_timeout_work, K_MSEC(BLE_ADV_RETRY_MS));
+                    } else {
+                        current_state = STATE_BONDED_DISCONNECTED;
+                    }
                 }
 
                 return;
@@ -267,12 +302,24 @@ void process_event(event_type_t event) {
 
                 if (is_app_id_empty()) {
                     // LOG: No APP_ID stored - entering setup mode (starting ADV)
-                    current_state = STATE_SETUP_MODE;
-                    ble_start_setup_advertising(true);
+                    ret = ble_start_setup_advertising(true);
+                    if (ret != 0) {
+                        // LOG: Failed to start advertising - continuing without advertising
+                        // CRITICAL (!): TRY TO RECONNECT?
+                        current_state = STATE_UNPAIRED; // JUST FOR NOW
+                    } else {
+                        current_state = STATE_SETUP_MODE;
+                    }
                 } else {
                     // LOG: APP_ID stored - entering bonded disconnected state (starting ADV)
-                    current_state = STATE_BONDED_DISCONNECTED;
-                    ble_start_setup_advertising(false);
+                    ret = ble_start_setup_advertising(false);
+                    if (ret != 0) {
+                        // LOG: Failed to start advertising - continuing without advertising
+                        // CRITICAL (!): TRY TO RECONNECT
+                        current_state = STATE_BONDED_DISCONNECTED;
+                    } else {
+                        current_state = STATE_BONDED_DISCONNECTED;
+                    }
                 }
 
                 return;
@@ -310,10 +357,16 @@ void process_event(event_type_t event) {
         case STATE_UNPAIRED:
             if (event == EV_BTN_2_PULSE) {
                 // LOG: Entering setup mode (starting ADV)
-                current_state = STATE_SETUP_MODE;
-                haptics_play_when_ready(HAPTICS_PATTERN_SETUP_MODE);
-                ble_start_setup_advertising(is_app_id_empty());
-                k_work_reschedule(&connection_timeout_work, K_MSEC(BLE_SETUP_TIMEOUT_MS)); 
+                ret = ble_start_setup_advertising(is_app_id_empty());
+                if(ret != 0) {
+                    // LOG: Failed to start advertising - continuing without advertising
+                    // CRITICAL (!): DECIDE WHAT TO DO
+                    current_state = STATE_UNPAIRED; // JUST FOR NOW
+                } else {
+                    current_state = STATE_SETUP_MODE;
+                    haptics_play_when_ready(HAPTICS_PATTERN_SETUP_MODE);
+                    k_work_reschedule(&connection_timeout_work, K_MSEC(BLE_SETUP_TIMEOUT_MS)); 
+                }
             }
             break;
 
@@ -321,21 +374,22 @@ void process_event(event_type_t event) {
             if (event == EV_BLE_CONNECTED) {
                 // LOG: BLE connected - waiting for notification enable
                 k_work_cancel_delayable(&connection_timeout_work);
-                current_state = STATE_WAITING_NOTIFICATION_ENABLE;
                 ble_stop_advertising();
+                current_state = STATE_WAITING_NOTIFICATION_ENABLE;
 
             } else if (event == EV_BLE_TIMEOUT) {
                 // LOG: BLE setup timeout in setup mode - returning to unpaired state
-                current_state = STATE_UNPAIRED;
                 ble_stop_advertising();
+                current_state = STATE_UNPAIRED;
 
             } else if (event == EV_BLE_DISCONNECTED) {
                 // LOG: BLE disconnected in setup mode - returning to unpaired state
                 k_work_cancel_delayable(&connection_timeout_work);
-                current_state = STATE_UNPAIRED;
                 ble_stop_advertising();
+                current_state = STATE_UNPAIRED;
             }
             break;
+            // SEMI-CRITICAL: DECIDE WHAT TO DO IF BLE_STOP_ADVERTISING FAILS
 
         case STATE_WAITING_NOTIFICATION_ENABLE:
             /*
@@ -353,8 +407,12 @@ void process_event(event_type_t event) {
                     current_state = STATE_UNPAIRED;
                 } else {
                     // LOG: BLE disconnected in waiting notification enable state - returning to bonded disconnected state (starting ADV)
+                    ret = ble_start_setup_advertising(false);
+                    if(ret != 0){
+                        // LOG: Failed to start advertising - continuing without advertising
+                        // CRITICAL (!): DECIDE WHAT TO DO
+                    }
                     current_state = STATE_BONDED_DISCONNECTED;
-                    ble_start_setup_advertising(false);
                 }
             }
             break;
@@ -366,7 +424,7 @@ void process_event(event_type_t event) {
                     // LOG: No APP_ID stored - saving new APP_ID
                     // New APP_ID
                     ret = save_received_app_id();
-                    if(ret == 1) {
+                    if(ret != 0) {
                         // LOG: Flash write failed while saving new APP_ID - continuing with RAM state
                     }
                     
@@ -376,6 +434,7 @@ void process_event(event_type_t event) {
                     ret = ble_send_event_secure(COMMAND_ACK);
                     if(ret != 0){
                         // LOG: Failed to send ACK - continuing without sending
+                        // CRITICAL: REVIEW (!)
                     }
 
                     haptics_play_when_ready(HAPTICS_PATTERN_ACK_CONNECTION);
@@ -391,6 +450,7 @@ void process_event(event_type_t event) {
                         ret = ble_send_event_secure(COMMAND_ACK);
                         if(ret != 0){
                             // LOG: Failed to send ACK - continuing without sending
+                            // CRITICAL: REVIEW (!)
                         }
                         add_event(EV_APP_AUTHENTICATED);
                         haptics_play_when_ready(HAPTICS_PATTERN_ACK_CONNECTION);
@@ -401,6 +461,7 @@ void process_event(event_type_t event) {
                         ret = ble_send_event_secure(COMMAND_NACK);
                         if(ret != 0){
                             // LOG: Failed to send NACK - continuing without sending
+                            // CRITICAL: REVIEW (!)
                         }
                         return;
                     }
@@ -412,7 +473,11 @@ void process_event(event_type_t event) {
                 } else {
                     // LOG: BLE disconnected while waiting for the saved APP_ID - returning to bonded disconnected state (starting ADV)
                     current_state = STATE_BONDED_DISCONNECTED;
-                    ble_start_setup_advertising(false);
+                    ret = ble_start_setup_advertising(false);
+                    if(ret != 0){
+                        // LOG: Failed to start advertising - continuing without advertising
+                        // SEMI-CRITICAL (!): DECIDE WHAT TO DO
+                    }
                 }
             }
             break;
@@ -421,31 +486,38 @@ void process_event(event_type_t event) {
             // On this state, the device is connected and authenticated with the app. It can send and receive events.
             if (event == EV_APP_FRIEND_EMERGENCY){
                 // LOG: Friend emergency event received
-                haptics_play_when_ready(HAPTICS_PATTERN_FRIEND_EMERGENCY);
                 ret = ble_send_event_secure(COMMAND_ACK);
                 if(ret != 0){
                     // LOG: Failed to send ACK - continuing without sending
+                    // CRITICAL: REVIEW (!)
                 }
+                haptics_play_when_ready(HAPTICS_PATTERN_FRIEND_EMERGENCY);
             } else if (event == EV_BLE_DISCONNECTED) {
                 // LOG: BLE disconnected - returning to bonded disconnected state (starting ADV)
                 current_state = STATE_BONDED_DISCONNECTED;
-                ble_start_setup_advertising(false);
+                ret = ble_start_setup_advertising(false);
+                if(ret != 0){
+                    // LOG: Failed to start advertising - continuing without advertising
+                    // SEMI-CRITICAL (!): DECIDE WHAT TO DO
+                }
 
             } else if (event == EV_BTN_1_PULSE) {
                 // LOG: Routine start button pressed
-                haptics_play_when_ready(HAPTICS_PATTERN_ROUTINE_START);
                 ret = ble_send_event_secure(COMMAND_ROUTINE);
                 if (ret != 0) {
                     // LOG: Failed to send COMMAND_ROUTINE - continuing without sending
+                    // CRITICAL (!): DECIDE WHAT TO DO
                 }
+                haptics_play_when_ready(HAPTICS_PATTERN_ROUTINE_START);
 
             } else if (event == EV_BTN_LONG_PRESS) {
                 // LOG: Routine cancel button pressed
-                haptics_play_when_ready(HAPTICS_PATTERN_ROUTINE_CANCEL);
                 ret = ble_send_event_secure(COMMAND_END_ROUTINE);
                 if (ret != 0) {
                     // LOG: Failed to send COMMAND_END_ROUTINE - continuing without sending
+                    // CRITICAL (!): DECIDE WHAT TO DO
                 }
+                haptics_play_when_ready(HAPTICS_PATTERN_ROUTINE_CANCEL);
 
             }
             break;
@@ -453,6 +525,7 @@ void process_event(event_type_t event) {
         case STATE_BONDED_DISCONNECTED:
             if (event == EV_BLE_CONNECTED) {
                 // LOG: BLE connected - waiting for notification enable
+                k_work_cancel_delayable(&connection_timeout_work);
                 current_state = STATE_WAITING_NOTIFICATION_ENABLE;
             } 
             break;
