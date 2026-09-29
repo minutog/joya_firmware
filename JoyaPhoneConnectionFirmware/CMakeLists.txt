@@ -36,5 +36,12 @@ target_sources(app PRIVATE
     src/nbm5100.c
 )
 
+#target_sources(app PRIVATE
+#    src/test_main.c
+#    src/nbm5100.c
+#    src/drv2605.c
+#    src/haptics.c
+#)
+
 # Include directories for the application
 target_include_directories(app PRIVATE include)
