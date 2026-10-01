@@ -37,7 +37,7 @@
 	};
 
 	zephyr,user {
-		haptic_en_gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+		haptic_en_gpios = <&gpio0 8 GPIO_ACTIVE_HIGH>;
 	};
 
 	aliases {
