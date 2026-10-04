@@ -17,8 +17,8 @@
 #error "Missing haptic_en_gpios property in /zephyr,user"
 #endif
 
-#define DRV2605_I2C_ADDR_LOW             0x5A
-#define DRV2605_I2C_ADDR_HIGH            0x5B
+#define DRV2605_I2C_ADDR	             0x5A
+//#define DRV2605_I2C_ADDR_HIGH            0x5B
 
 #define DRV2605_I2C_MAX_RETRIES          3
 #define DRV2605_I2C_RETRY_DELAY_MS       2
@@ -118,18 +118,8 @@ int drv2605_init(void)
 
 	k_msleep(10);
 
-	err = i2c_recover_bus(haptic_i2c);
-	if (err < 0 && err != -ENOSYS) {
-		/* Keep the existing behavior: continue and try to probe the device. */
-	}
-
-	drv2605_addr = DRV2605_I2C_ADDR_LOW;
+	drv2605_addr = DRV2605_I2C_ADDR;
 	err = drv2605_probe_addr(drv2605_addr);
-
-	if (err < 0) {
-		drv2605_addr = DRV2605_I2C_ADDR_HIGH;
-		err = drv2605_probe_addr(drv2605_addr);
-	}
 
 	if (err < 0) {
 		(void)gpio_pin_set_dt(&haptic_en, 0);
@@ -142,8 +132,10 @@ int drv2605_init(void)
         return err;
     }
 
+	/* err = drv2605_write_reg(DRV2605_REG_MODE,
+				DRV2605_MODE_STANDBY_INTERNAL_TRIGGER); */
 	err = drv2605_write_reg(DRV2605_REG_MODE,
-				DRV2605_MODE_STANDBY_INTERNAL_TRIGGER);
+				DRV2605_MODE_INTERNAL_TRIGGER);
 	if (err < 0) {
 		return err;
 	}
@@ -181,8 +173,10 @@ int drv2605_stop(void)
 
 	rtp_err = drv2605_write_reg(DRV2605_REG_RTP_INPUT,
 				    DRV2605_RTP_OFF);
+	/* mode_err = drv2605_write_reg(DRV2605_REG_MODE,
+				     DRV2605_MODE_STANDBY_INTERNAL_TRIGGER); */
 	mode_err = drv2605_write_reg(DRV2605_REG_MODE,
-				     DRV2605_MODE_STANDBY_INTERNAL_TRIGGER);
+				     DRV2605_MODE_INTERNAL_TRIGGER);
 
 	if (rtp_err < 0) {
 		return rtp_err;

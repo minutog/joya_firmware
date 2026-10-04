@@ -106,12 +106,6 @@ int nbm5100_init(void) {
 
     k_msleep(20); // datasheet requirement
 
-    /* Recover the shared bus before the first NBM configuration transfer. */
-    err = i2c_recover_bus(nbm_i2c);
-    if (err < 0 && err != -ENOSYS) {
-        return err;
-    }
-
     err = nbm5100_configure_mode();
     if (err) {
         return err;

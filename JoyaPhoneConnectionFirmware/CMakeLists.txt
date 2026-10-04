@@ -24,24 +24,30 @@ project(
 )
 
 # Source files for the application
-# target_sources(app PRIVATE 
-#     src/main.c
-#     src/app_comm.c
-#     src/app_state.c
-#     src/ble_driver.c
-#     src/button.c
-#     src/haptics.c
-#     src/drv2605.c
-#     src/flash_memory.c
+target_sources(app PRIVATE 
+    src/main.c
+    src/app_comm.c
+    src/app_state.c
+    src/ble_driver.c
+    src/button.c
+    src/haptics.c
+    src/drv2605.c
+    src/flash_memory.c
+    src/nbm5100.c
+)
+
+# target_sources(app PRIVATE
+#     src/test_main.c
 #     src/nbm5100.c
+#     src/drv2605.c
+#     src/haptics.c
 # )
 
-target_sources(app PRIVATE
-    src/test_main.c
-    src/nbm5100.c
-    src/drv2605.c
-    src/haptics.c
-)
+# target_sources(app PRIVATE
+#     src/test_main_2.c
+#     src/nbm5100.c
+#     src/drv2605.c
+# )
 
 # Include directories for the application
 target_include_directories(app PRIVATE include)

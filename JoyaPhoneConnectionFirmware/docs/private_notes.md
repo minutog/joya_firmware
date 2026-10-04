@@ -50,3 +50,12 @@ No utilizar una cola FIFO completa: podría reproducir vibraciones atrasadas que
 - emergencia sin APP_ID → UNPAIRED si falla; 
 - desconexión con APP_ID → BONDED_DISCONNECTED;
 - desconexión desde authenticated → BONDED_DISCONNECTED;
+
+---
+# Pines
+- P0.06: SCL
+- P0.07: SDA
+- P0.08: HAPT_EN
+- P0.11: RDY
+- P0.12: START
+- P0.13: BUTTON
