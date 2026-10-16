@@ -44,7 +44,7 @@
 #define NBM5100_VSET_3V4          0x0D
 #define NBM5100_VFIX_3V84         0x07
 #define NBM5100_VMIN_3V2          0x04
-#define NBM5100_ICH_4MA           0x01
+#define NBM5100_ICH_4MA           0x04
 
 /* Specification values 
     * VSET/VDH: 3.4V
