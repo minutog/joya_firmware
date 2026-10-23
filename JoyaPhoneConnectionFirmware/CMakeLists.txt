@@ -33,7 +33,6 @@ target_sources(app PRIVATE
     src/haptics.c
     src/drv2605.c
     src/flash_memory.c
-    src/nbm5100.c
 )
 
 # target_sources(app PRIVATE

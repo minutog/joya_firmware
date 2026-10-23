@@ -3,7 +3,6 @@
 #include <zephyr/dfu/mcuboot.h>
 #include "button.h"
 #include "app_state.h"
-#include "nbm5100.h"
 
 int main(void) {
     bool ota_test_boot = !boot_is_img_confirmed();
@@ -33,17 +32,8 @@ int main(void) {
     }
 
     
-    int nbm_err = nbm5100_init();
-    int nbm_rdy_err = -ENODEV;
-    int drv_err = -ENODEV;
-
-    if (nbm_err == 0) {
-        nbm_rdy_err = nbm_ready_init();
-        drv_err = haptics_init();
-    }
-
-    bool all_initialized = nbm_rdy_err == 0 && nbm_err == 0 && drv_err == 0;
-    haptics_set_available(all_initialized);
+    int drv_err = haptics_init();
+    haptics_set_available(drv_err == 0);
 
     // Error treatment (TO DO)
 

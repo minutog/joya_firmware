@@ -34,6 +34,17 @@
 
 #define DRV2605_RTP_OFF                  0
 
+#define DRV2605_REG_OD_CLAMP    		0x17
+#define DRV2605_OD_CLAMP_2V5   			0x72
+// OD_CLAMP = V_RATED/0.02196 = 2.5/0.02196 = 113.8 approx 0x72
+
+#define DRV2605_REG_FEEDBACK_CONTROL   0x1A
+#define DRV2605_REG_CONTROL3           0x1D
+
+#define DRV2605_N_ERM_LRA             BIT(7)
+#define DRV2605_ERM_OPEN_LOOP         BIT(5)
+#define DRV2605_DATA_FORMAT_RTP       BIT(3)
+
 static const struct gpio_dt_spec haptic_en =
 	GPIO_DT_SPEC_GET(HAPTIC_NODE, haptic_en_gpios);
 
@@ -136,6 +147,33 @@ int drv2605_init(void)
 				DRV2605_MODE_STANDBY_INTERNAL_TRIGGER); */
 	err = drv2605_write_reg(DRV2605_REG_MODE,
 				DRV2605_MODE_INTERNAL_TRIGGER);
+	if (err < 0) {
+		return err;
+	}
+
+	uint8_t reg;
+
+	/* Select ERM actuator */
+	err = drv2605_read_reg(DRV2605_REG_FEEDBACK_CONTROL, &reg);
+	if (err < 0) {
+		return err;
+	}
+
+	reg &= ~DRV2605_N_ERM_LRA;
+
+	err = drv2605_write_reg(DRV2605_REG_FEEDBACK_CONTROL, reg);
+	if (err < 0) {
+		return err;
+	}
+
+	/* Configure ERM open-loop with signed RTP */
+	err = drv2605_read_reg(DRV2605_REG_CONTROL3, &reg);
+	if (err < 0) {
+		return err;
+	}
+
+	err = drv2605_write_reg(DRV2605_REG_OD_CLAMP,
+                        DRV2605_OD_CLAMP_2V5);
 	if (err < 0) {
 		return err;
 	}

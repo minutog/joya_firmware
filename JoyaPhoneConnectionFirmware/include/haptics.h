@@ -22,7 +22,7 @@ enum haptics_pattern {
 int haptics_init(void);
 
 /**
- * @brief Request a haptic pattern after the NBM reports ready.
+ * @brief Request a haptic pattern for immediate playback through the DRV2605.
  * @param pattern Pattern to play, or HAPTICS_PATTERN_NONE to stop playback.
  * @note This function must be called from thread context.
  */
@@ -41,13 +41,13 @@ void haptics_stop(void);
 bool haptics_is_ready(void);
 
 /**
- * @brief Set whether the complete haptic subsystem is available.
- * @param available true when the NBM and DRV2605 can be used.
+ * @brief Set whether haptic playback is available.
+ * @param available true when the DRV2605 can be used.
  */
 void haptics_set_available(bool available);
 
 /**
- * @brief Check whether the complete haptic subsystem is available.
+ * @brief Check whether haptic playback is available.
  * @return true if haptic playback is available, otherwise false.
  */
 bool haptics_are_available(void);
