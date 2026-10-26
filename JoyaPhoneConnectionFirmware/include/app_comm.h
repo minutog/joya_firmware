@@ -88,3 +88,13 @@ enum {
 };
 
 #endif
+
+/*
+1. Cuando estoy en una emergencia y un contacto confirma la recepción de la alerta (FOLLOW ME): 0x43
+2. Cuando un contacto está en emergencia (FRIEND EMERGENCY): 0x44 > valen va a repetir periodicamente hasta confirmar via app
+3. Cuando un contacto está en emergencia y confirmo la recepción de la alerta (ACK EMERGENCY): 0x45 < con (2) no hace falta
+
+Validar que pasa si el stop emergency se envia sin señal
+
+- 0x43 probar si vibra
+*/

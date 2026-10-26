@@ -7,7 +7,7 @@
 
 #define HAPTIC_READY_MAX_ATTEMPTS 3
 #define HAPTIC_READY_RETRY_MS     500
-
+#define HAPTIC_RTP_INTENSITY 		122 //antes: 50
 
 /* ============================================================
  * Internal state
@@ -43,64 +43,64 @@ static const struct haptic_step pattern_setup_mode[] = {
 */
 // struct haptic_step = [duration_ms, amplitude]
 static const struct haptic_step pattern_setup_mode[] = {
-	{ 700,  50 },
+	{ 700,  HAPTIC_RTP_INTENSITY},
 	{ 100, 0 },
 };
 
 static const struct haptic_step pattern_ack_connection[] = {
-	{ 200, 50},
+	{ 200,  HAPTIC_RTP_INTENSITY},
 	{ 100, 0},
-	{ 200, 50},
+	{ 200,  HAPTIC_RTP_INTENSITY},
 	{ 100, 0},
-	{ 200, 50},
+	{ 200,  HAPTIC_RTP_INTENSITY},
 	{ 100, 0},
 };
 
 static const struct haptic_step pattern_routine_start[] = {
-	{ 700,  50 },
+	{ 700,  HAPTIC_RTP_INTENSITY },
 	{ 100,  0   },
 };
 
 static const struct haptic_step pattern_routine_cancel[] = {
-	{ 200, 50 },
+	{ 200,  HAPTIC_RTP_INTENSITY },
 	{ 100, 0  },
-	{ 200, 50  },
+	{ 200,  HAPTIC_RTP_INTENSITY  },
 	{ 100, 0   },
 };
 
 static const struct haptic_step pattern_emergency_start[] = {
-	{ 2000, 50 },
+	{ 2000,  HAPTIC_RTP_INTENSITY },
 	{ 100, 0 },
 };
 
 static const struct haptic_step pattern_follow_me[] = {
-	{ 200, 50  },
+	{ 200,  HAPTIC_RTP_INTENSITY  },
 	{ 100, 0   },
-	{ 200, 50 },
+	{ 200,  HAPTIC_RTP_INTENSITY },
 	{ 100, 0   },
 };
 
 static const struct haptic_step pattern_friend_emergency[] = {
-    { 200, 50 }, 
+    { 200,  HAPTIC_RTP_INTENSITY }, 
 	{ 100, 0 },
-    { 200, 50 }, 
+    { 200,  HAPTIC_RTP_INTENSITY }, 
 	{ 350, 0 },
-    { 200, 50 }, 
+    { 200,  HAPTIC_RTP_INTENSITY }, 
 	{ 100, 0 },
-    { 200, 50 }, 
+    { 200,  HAPTIC_RTP_INTENSITY }, 
 	{ 350, 0 },
-	{ 200, 50 }, 
+	{ 200,  HAPTIC_RTP_INTENSITY }, 
 	{ 100, 0 },
-    { 200, 50 }, 
+    { 200,  HAPTIC_RTP_INTENSITY }, 
 	{ 100, 0 },
 };
 
 static const struct haptic_step pattern_factory_reset[] = {
-	{ 200, 50},
+	{ 200,  HAPTIC_RTP_INTENSITY},
 	{ 100, 0},
-	{ 200, 50},
+	{ 200,  HAPTIC_RTP_INTENSITY},
 	{ 100, 0},
-	{ 200, 50},
+	{ 200,  HAPTIC_RTP_INTENSITY},
 	{ 100, 0},
 };
 
