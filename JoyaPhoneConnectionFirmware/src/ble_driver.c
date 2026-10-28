@@ -215,6 +215,29 @@ int ble_start_setup_advertising(bool is_new_connection)
 	return 0;
 }
 
+int ble_start_setup_advertising_backup(void)
+{
+	int err;
+
+	err = bt_le_adv_stop();
+	if (err < 0 && err != -EALREADY) {
+		// (improvement): decide what to do if stopping advertising fails (e.g., retry, log error, etc.)
+	}
+
+	err = bt_set_name("Joya BACKUP");
+	
+	if (err < 0) {
+		return err;
+	}
+
+	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
+	if (err < 0) {
+		return err;
+	}
+
+
+	return 0;
+}
 
 int ble_stop_advertising(void) {
     return bt_le_adv_stop();

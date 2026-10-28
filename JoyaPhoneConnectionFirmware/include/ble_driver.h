@@ -55,5 +55,6 @@ int ble_stop_advertising(void);
  */
 int ble_disconnect(void);
 
+int ble_start_setup_advertising_backup(void);
 
 #endif // BLE_DRIVER_H
