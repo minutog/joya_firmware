@@ -28,12 +28,18 @@ struct haptic_step {
 
 static uint16_t drv2605_addr;
 static bool haptics_ready;
+static bool haptic_enabled;
 
 static enum haptics_pattern active_pattern = HAPTICS_PATTERN_NONE;
 static size_t active_step_index;
 
 static void haptics_pattern_work_handler(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(haptics_pattern_work, haptics_pattern_work_handler);
+static void haptics_effect_work_handler(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(haptics_effect_work, haptics_effect_work_handler);
+static struct k_work_sync pattern_work_sync;
+static struct k_work_sync effect_work_sync;
+static uint16_t effect_poll_count;
 /*
 static const struct haptic_step pattern_setup_mode[] = {
 	{ 80,  55 },
@@ -172,13 +178,43 @@ static int drv2605_set_rtp(uint8_t amplitude)
  */
 static void drv2605_idle(void)
 {
-	// Set the DRV2605 to internal trigger mode and turn off real-time playback
-	(void)drv2605_write_reg(DRV2605_REG_RTP_INPUT, HAPTIC_RTP_OFF);
-	(void)drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
+	if (haptic_enabled) {
+		(void)drv2605_write_reg(DRV2605_REG_RTP_INPUT, HAPTIC_RTP_OFF);
+		(void)drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_STANDBY);
+		(void)gpio_pin_set_dt(&haptic_en, 0);
+		haptic_enabled = false;
+	}
 
 	// Reset the active pattern state
 	active_pattern = HAPTICS_PATTERN_NONE;
 	active_step_index = 0;
+}
+
+static int drv2605_wake(void)
+{
+	int err;
+
+	if (haptic_enabled) {
+		return 0;
+	}
+
+	err = gpio_pin_set_dt(&haptic_en, 1);
+	if (err < 0) {
+		return err;
+	}
+	haptic_enabled = true;
+	k_msleep(10);
+
+	/* EN low may reset the DRV2605 registers, so restore the setup each time. */
+	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
+	if (err == 0) {
+		err = drv2605_write_reg(DRV2605_REG_LIBRARY, 0x01);
+	}
+	if (err < 0) {
+		(void)gpio_pin_set_dt(&haptic_en, 0);
+		haptic_enabled = false;
+	}
+	return err;
 }
 
 /**
@@ -316,6 +352,20 @@ static void haptics_pattern_work_handler(struct k_work *work)
 	(void)k_work_reschedule(&haptics_pattern_work, K_MSEC(duration_ms));
 }
 
+static void haptics_effect_work_handler(struct k_work *work)
+{
+	uint8_t go;
+
+	ARG_UNUSED(work);
+	/* Poll GO until the library effect finishes; bound the wait on faults. */
+	if (drv2605_read_reg(DRV2605_REG_GO, &go) < 0 ||
+	    (go & 0x01) == 0 || ++effect_poll_count >= 1000) {
+		drv2605_idle();
+		return;
+	}
+	(void)k_work_reschedule(&haptics_effect_work, K_MSEC(10));
+}
+
 /**
  * PUBLIC API
  */
@@ -345,6 +395,7 @@ int haptics_init(void)
 	if (err < 0) {
 		return err;
 	}
+	haptic_enabled = true;
 
 	k_msleep(10);
 
@@ -363,6 +414,7 @@ int haptics_init(void)
 
 	if (err < 0) {
 		(void)gpio_pin_set_dt(&haptic_en, 0);
+		haptic_enabled = false;
 		return -ENODEV;
 	}
 
@@ -370,16 +422,21 @@ int haptics_init(void)
 
 	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
 	if (err < 0) {
+		(void)gpio_pin_set_dt(&haptic_en, 0);
+		haptic_enabled = false;
 		return err;
 	}
 
 	// Note: 0x01 is the value used in the old firmware
 	err = drv2605_write_reg(DRV2605_REG_LIBRARY, 0x01);
 	if (err < 0) {
+		(void)gpio_pin_set_dt(&haptic_en, 0);
+		haptic_enabled = false;
 		return err;
 	}
 
 	haptics_ready = true;
+	drv2605_idle();
 
 	return 0;
 }
@@ -394,15 +451,23 @@ void haptics_play_effect(enum haptics_effect effect)
         return;
     }
 
-    (void)k_work_cancel_delayable(&haptics_pattern_work);
+	(void)k_work_cancel_delayable_sync(&haptics_pattern_work, &pattern_work_sync);
+	(void)k_work_cancel_delayable_sync(&haptics_effect_work, &effect_work_sync);
+	int err = drv2605_wake();
+	if (err < 0) {
+		return;
+	}
 
     active_pattern = HAPTICS_PATTERN_NONE;
     active_step_index = 0;
 
-    int err = drv2605_play_effect((uint8_t)effect);
+	err = drv2605_play_effect((uint8_t)effect);
     if (err < 0) {
-        // (improvement): decide what to do if playing effect fails (e.g., retry, log error, etc.)
+		drv2605_idle();
+		return;
     }
+	effect_poll_count = 0;
+	(void)k_work_schedule(&haptics_effect_work, K_MSEC(10));
 }
 
 /**
@@ -421,7 +486,12 @@ void haptics_play(enum haptics_pattern pattern)
 		return;
 	}
 
-	(void)k_work_cancel_delayable(&haptics_pattern_work);
+	(void)k_work_cancel_delayable_sync(&haptics_pattern_work, &pattern_work_sync);
+	(void)k_work_cancel_delayable_sync(&haptics_effect_work, &effect_work_sync);
+	if (drv2605_wake() < 0) {
+		drv2605_idle();
+		return;
+	}
 
 	active_pattern = pattern;
 	active_step_index = 0;
@@ -434,7 +504,8 @@ void haptics_play(enum haptics_pattern pattern)
  */
 void haptics_stop(void)
 {
-	(void)k_work_cancel_delayable(&haptics_pattern_work);
+	(void)k_work_cancel_delayable_sync(&haptics_pattern_work, &pattern_work_sync);
+	(void)k_work_cancel_delayable_sync(&haptics_effect_work, &effect_work_sync);
 
 	if (haptics_ready) {
 		drv2605_idle();
