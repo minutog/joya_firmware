@@ -1,4 +1,5 @@
 #include "haptics.h"
+#include <zephyr/pm/device.h>
 
 #define HAPTIC_NODE DT_PATH(zephyr_user)
 
@@ -173,10 +174,42 @@ static int drv2605_set_rtp(uint8_t amplitude)
 	return 0;
 }
 
+static bool i2c_suspended = false;
+
+static int haptics_i2c_suspend(void)
+{
+    if (i2c_suspended) {
+        return 0;
+    }
+
+    int err = pm_device_action_run(haptic_i2c, PM_DEVICE_ACTION_SUSPEND);
+
+    if (err == 0) {
+        i2c_suspended = true;
+    }
+
+    return err;
+}
+
+static int haptics_i2c_resume(void)
+{
+    if (!i2c_suspended) {
+        return 0;
+    }
+
+    int err = pm_device_action_run(haptic_i2c,PM_DEVICE_ACTION_RESUME);
+
+    if (err == 0) {
+        i2c_suspended = false;
+    }
+
+    return err;
+}
+
 /**
  * @brief Stop real-time playback and reset the active pattern state.
  */
-static void drv2605_idle(void)
+static int drv2605_idle(void)
 {
 	if (haptic_enabled) {
 		(void)drv2605_write_reg(DRV2605_REG_RTP_INPUT, HAPTIC_RTP_OFF);
@@ -188,33 +221,45 @@ static void drv2605_idle(void)
 	// Reset the active pattern state
 	active_pattern = HAPTICS_PATTERN_NONE;
 	active_step_index = 0;
+
+	return haptics_i2c_suspend();
 }
 
 static int drv2605_wake(void)
 {
-	int err;
+    int err;
 
-	if (haptic_enabled) {
-		return 0;
-	}
+    if (haptic_enabled) {
+        return 0;
+    }
 
-	err = gpio_pin_set_dt(&haptic_en, 1);
-	if (err < 0) {
-		return err;
-	}
-	haptic_enabled = true;
-	k_msleep(10);
+    err = haptics_i2c_resume();
+    if (err < 0) {
+        return err;
+    }
 
-	/* EN low may reset the DRV2605 registers, so restore the setup each time. */
-	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
-	if (err == 0) {
-		err = drv2605_write_reg(DRV2605_REG_LIBRARY, 0x01);
-	}
-	if (err < 0) {
-		(void)gpio_pin_set_dt(&haptic_en, 0);
-		haptic_enabled = false;
-	}
-	return err;
+    err = gpio_pin_set_dt(&haptic_en, 1);
+    if (err < 0) {
+        return err;
+    }
+
+    haptic_enabled = true;
+    k_msleep(10);
+
+    /* Restore DRV configuration */
+    err = drv2605_write_reg(DRV2605_REG_MODE,
+                            DRV2605_MODE_INTERNAL_TRIGGER);
+
+    if (err == 0) {
+        err = drv2605_write_reg(DRV2605_REG_LIBRARY, 0x01);
+    }
+
+    if (err < 0) {
+        (void)gpio_pin_set_dt(&haptic_en, 0);
+        haptic_enabled = false;
+    }
+
+    return err;
 }
 
 /**
@@ -436,9 +481,9 @@ int haptics_init(void)
 	}
 
 	haptics_ready = true;
-	drv2605_idle();
+	return drv2605_idle();
 
-	return 0;
+	// return 0;
 }
 
 /**
