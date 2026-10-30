@@ -25,6 +25,18 @@
 #define HAPTIC_RTP_OFF					0
 #define HAPTIC_RTP_MAX					127
 
+// Adaptación nuevo motor
+#define DRV2605_REG_OD_CLAMP    		0x17
+#define DRV2605_OD_CLAMP_2V5   			0x72
+// OD_CLAMP = V_RATED/0.02196 = 2.5/0.02196 = 113.8 approx 0x72
+
+#define DRV2605_REG_FEEDBACK_CONTROL   0x1A
+#define DRV2605_REG_CONTROL3           0x1D
+
+#define DRV2605_N_ERM_LRA             BIT(7)
+#define DRV2605_ERM_OPEN_LOOP         BIT(5)
+#define DRV2605_DATA_FORMAT_RTP       BIT(3)
+
 enum haptics_pattern {
 	HAPTICS_PATTERN_NONE = 0,
 	HAPTICS_PATTERN_SETUP_MODE,

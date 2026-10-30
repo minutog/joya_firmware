@@ -415,6 +415,22 @@ static void haptics_effect_work_handler(struct k_work *work)
  * PUBLIC API
  */
 
+ static int nbm_bypass_init(void)
+{
+    uint8_t v;
+    int err;
+
+    k_msleep(25);
+
+    err = i2c_write(haptic_i2c, (uint8_t[]){0x08, 0x00}, 2, 0x2E);
+    if (err < 0) return err;
+
+    err = i2c_reg_read_byte(haptic_i2c, 0x2E, 0x0A, &v);
+    if (err < 0) return err;
+
+    return i2c_reg_write_byte(haptic_i2c, 0x2E, 0x0A, v & ~0x10);
+}
+
 /**
  * @brief Initialize the haptic enable GPIO and the DRV2605 controller.
  * @return 0 on success, or a negative error code on failure.
@@ -472,11 +488,30 @@ int haptics_init(void)
 		return err;
 	}
 
-	// Note: 0x01 is the value used in the old firmware
-	err = drv2605_write_reg(DRV2605_REG_LIBRARY, 0x01);
+	uint8_t reg;
+
+	/* Select ERM actuator */
+	err = drv2605_read_reg(DRV2605_REG_FEEDBACK_CONTROL, &reg);
 	if (err < 0) {
-		(void)gpio_pin_set_dt(&haptic_en, 0);
-		haptic_enabled = false;
+		return err;
+	}
+
+	reg &= ~DRV2605_N_ERM_LRA;
+
+	err = drv2605_write_reg(DRV2605_REG_FEEDBACK_CONTROL, reg);
+	if (err < 0) {
+		return err;
+	}
+
+	/* Configure ERM open-loop with signed RTP */
+	err = drv2605_read_reg(DRV2605_REG_CONTROL3, &reg);
+	if (err < 0) {
+		return err;
+	}
+
+	err = drv2605_write_reg(DRV2605_REG_OD_CLAMP,
+                        DRV2605_OD_CLAMP_2V5);
+	if (err < 0) {
 		return err;
 	}
 
