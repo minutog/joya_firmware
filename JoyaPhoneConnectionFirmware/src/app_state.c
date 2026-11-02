@@ -125,6 +125,16 @@ void fsm_thread_loop(void) {
 void process_event(event_type_t event) {
     int ret;
 
+    switch (event) {
+        case EV_BATTERY_LEVEL_2:
+            // TO DO
+        case EV_BATTERY_NORMAL:
+            // TO DO
+            break;
+        default:
+            break;
+    }
+
     /*
      * Note: factory reset has a higher priority that everything else
      * to fulfill the requirement updated in previous conversation.
@@ -449,6 +459,21 @@ void process_event(event_type_t event) {
                     // LOG: Failed to send COMMAND_END_ROUTINE - continuing without sending
                 }
 
+            } else if (event == EV_BATTERY_LEVEL_1) {
+                ret = ble_send_event_secure(LOW_BATTERY_LEVEL_1);
+                if (ret != 0){
+                    // LOG: Failed to send LOW_BATTERY_LEVEL_1 - continuing without sending
+                }
+            } else if (event == EV_BATTERY_LEVEL_2) {
+                ret = ble_send_event_secure(LOW_BATTERY_LEVEL_2);
+                if (ret != 0){
+                    // LOG: Failed to send LOW_BATTERY_LEVEL_2 - continuing without sending
+                }
+            } else if (event == EV_BATTERY_NORMAL) {
+                ret = ble_send_event_secure(BATTERY_NORMAL);
+                if (ret != 0){
+                    // LOG: Failed to send BATTERY_NORMAL - continuing without sending
+                }
             }
             break;
 

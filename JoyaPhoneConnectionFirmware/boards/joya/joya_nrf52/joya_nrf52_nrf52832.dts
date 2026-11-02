@@ -4,6 +4,8 @@
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/adc/nrf-adc.h>
 
 #include "joya_nrf52-pinctrl.dtsi"
 
@@ -31,6 +33,8 @@
 
 	zephyr,user {
 		haptic_en_gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+		io-channels = <&adc 0>;
+		io-channel-names = "battery";
 	};
 
 	aliases {
@@ -100,7 +104,18 @@
 };
 
 &adc {
-	status = "disabled";
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1_3";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+		zephyr,input-positive = <NRF_SAADC_AIN7>;
+		zephyr,resolution = <12>;
+	};
 };
 
 &temp {

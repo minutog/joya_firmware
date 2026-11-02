@@ -2,20 +2,20 @@
 #include <zephyr/dfu/mcuboot.h>
 #include "button.h"
 #include "app_state.h"
+#include "battery.h"
 
 int main(void) {
     bool ota_test_boot = !boot_is_img_confirmed();
-    
+
     int ret ;
     ret = storage_init();
     if (ret != 0) {
-        // LOG: Storage initialization failed - continuing with RAM defaults
-        // (improvement): decide what to do if haptics initialization fails (e.g., retry, log error, etc.)
+        // Storage initialization failed - continuing with RAM defaults
     }
     
     ret = ble_driver_init();
     if (ret) {
-        // LOG: BLE driver initialization failed
+        // BLE driver initialization failed
         return -1;
     }
 
@@ -25,8 +25,7 @@ int main(void) {
     
     ret = button_init();
     if (ret != 0) {
-        // LOG: Button initialization failed
-        //ble_start_setup_advertising_backup(true);
+        // Button initialization failed
         return -1;
     }
 
@@ -44,6 +43,11 @@ int main(void) {
         haptics_play(HAPTICS_PATTERN_ACK_CONNECTION);
     }
     */
+
+    ret = battery_init();
+    if (ret == 0) {
+        ret = battery_monitor_start();
+    }
     
     // LOG: Initialization complete
 
