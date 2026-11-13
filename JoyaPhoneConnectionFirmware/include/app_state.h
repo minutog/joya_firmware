@@ -1,6 +1,8 @@
 #ifndef APP_STATE_H
 #define APP_STATE_H
 
+#define SIZE_APP_ID 16
+
 #include "ble_driver.h"
 #include "app_comm.h"
 #include "flash_memory.h"
@@ -55,14 +57,22 @@ typedef enum {
     EV_APP_STOP_EMERGENCY,     
     EV_APP_FOLLOW_ME,
     EV_APP_ACK_EMERGENCY,
-    EV_APP_FRIEND_EMERGENCY
+    EV_APP_FRIEND_EMERGENCY,
+    EV_APP_OTA_ENABLE,
+    EV_APP_OTA_DISABLE
 } event_type_t;
+
+typedef struct {
+    event_type_t type;
+    struct bt_conn *conn;
+    uint8_t app_id[SIZE_APP_ID];
+} app_event_t;
 
 /**
  * @brief Process an application event.
  * @param event The event to process.
  */
-void process_event(event_type_t event);
+void process_event(const app_event_t *entry);
 
 /**
  * @brief Run the finite state machine thread loop.
@@ -76,6 +86,7 @@ void fsm_thread_loop(void);
  * @return 0 on success, or a negative error code on failure.
  */
 int add_event(event_type_t event);
+int add_event_for_conn(event_type_t event, struct bt_conn *conn, const uint8_t *app_id);
 
 /**
  * @brief Get the current application state.

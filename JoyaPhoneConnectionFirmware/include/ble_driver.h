@@ -35,6 +35,9 @@
  * @return 0 on success, or a negative error code on failure.
  */
 int ble_driver_init(void);
+bool ble_is_current_conn(struct bt_conn *conn);
+bool ble_is_authenticated_conn(struct bt_conn *conn);
+bool ble_mark_authenticated_conn(struct bt_conn *conn);
 
 /**
  * @brief Send a secure event to the mobile app.

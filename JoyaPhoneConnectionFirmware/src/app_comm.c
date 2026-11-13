@@ -1,6 +1,5 @@
 #include "app_comm.h"
 
-uint8_t received_app_id[SIZE_APP_ID] = {0};
 /**
  * BLE CALLBACKS
  */
@@ -40,6 +39,10 @@ ssize_t on_rx_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *att
     } else if (val == COMMAND_FRIEND_EMERGENCY) {
         ev = EV_APP_FRIEND_EMERGENCY;
         add_event(ev);
+    } else if (val == COMMAND_OTA_ENABLE) {
+        add_event_for_conn(EV_APP_OTA_ENABLE, conn, NULL);
+    } else if (val == COMMAND_OTA_DISABLE) {
+        add_event_for_conn(EV_APP_OTA_DISABLE, conn, NULL);
     } else {
         // (improvement): handle unknown command if needed
     }
@@ -57,32 +60,29 @@ ssize_t on_rx_auth_write_handler(struct bt_conn *conn, const struct bt_gatt_attr
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
     }
 
-    memcpy(received_app_id, buf, SIZE_APP_ID);
-
-    add_event(EV_APP_IDENTIFIER_RECEIVED);
+    add_event_for_conn(EV_APP_IDENTIFIER_RECEIVED, conn, buf);
     
     return len;
 }
 
 void on_connected_handler(struct bt_conn *conn, uint8_t err) {
     event_type_t ev = EV_BLE_CONNECTED;
-    add_event(ev);
+    add_event_for_conn(ev, conn, NULL);
 }
     
 void on_disconnected_handler(struct bt_conn *conn, uint8_t reason) {
     event_type_t ev = EV_BLE_DISCONNECTED;
-    add_event(ev);
+    add_event_for_conn(ev, conn, NULL);
 }
 
-int check_app_id(const uint8_t *app_id) {
+int check_app_id(const uint8_t *received_app_id, const uint8_t *app_id) {
     return memcmp(received_app_id, app_id, SIZE_APP_ID);
 }
 
-int save_received_app_id(void){
+int save_received_app_id(const uint8_t *received_app_id){
     int ret = storage_save_app_id(received_app_id);
     if (ret != 0) {
         // LOG: Failed to save received APP_ID - continuing without saving
     }
-    memset(received_app_id, 0, SIZE_APP_ID);
     return ret;
 }

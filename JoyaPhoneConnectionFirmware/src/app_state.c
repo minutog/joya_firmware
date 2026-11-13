@@ -1,4 +1,5 @@
 #include "app_state.h"
+#include "ota_access.h"
 
 /** @brief Array of retry intervals for emergency events in milliseconds */
 const uint32_t EMERGENCY_RETRY_MS[] = {EMERGENCY_RETRY_INITIAL_MS, EMERGENCY_RETRY_FAST_MS, EMERGENCY_RETRY_MEDIUM_MS, EMERGENCY_RETRY_SLOW_MS, EMERGENCY_RETRY_VERY_SLOW_MS};
@@ -11,7 +12,7 @@ static struct k_work_delayable emergency_retry_work;
 /** @brief Current application state */
 static volatile app_state_t current_state = STATE_UNPAIRED;
 /** @brief Message queue for events */
-K_MSGQ_DEFINE(event_queue, sizeof(event_type_t), 20, 4);
+K_MSGQ_DEFINE(event_queue, sizeof(app_event_t), 20, 4);
 
 /** @brief Thread for the finite state machine */
 K_THREAD_DEFINE(fsm_thread_id, 4098, fsm_thread_loop, NULL, NULL, NULL, 5, 0, 0);
@@ -87,8 +88,7 @@ static void emergency_retry_work_handler(struct k_work *work)
  * This function is called when the connection timeout work is executed. It adds a timeout event to the event queue.
 */
 static void connection_timeout_work_handler(struct k_work *work) {
-    event_type_t ev = EV_BLE_TIMEOUT;
-    k_msgq_put(&event_queue, &ev, K_NO_WAIT);
+    add_event(EV_BLE_TIMEOUT);
 }
 
 
@@ -103,18 +103,33 @@ app_state_t get_current_state(void) {
 
 int add_event(event_type_t event)
 {
-	int err = k_msgq_put(&event_queue, &event, K_NO_WAIT);
-	return err;
+    return add_event_for_conn(event, NULL, NULL);
+}
+
+int add_event_for_conn(event_type_t event, struct bt_conn *conn, const uint8_t *app_id)
+{
+    app_event_t entry = {.type = event, .conn = conn ? bt_conn_ref(conn) : NULL};
+    if (app_id) {
+        memcpy(entry.app_id, app_id, SIZE_APP_ID);
+    }
+    int err = k_msgq_put(&event_queue, &entry, K_NO_WAIT);
+    if (err && entry.conn) {
+        bt_conn_unref(entry.conn);
+    }
+    return err;
 }
 
 void fsm_thread_loop(void) {
     k_work_init_delayable(&emergency_retry_work, emergency_retry_work_handler);
     k_work_init_delayable(&connection_timeout_work, connection_timeout_work_handler);
 
-    event_type_t event;
+    app_event_t entry;
     while (1) {
-        k_msgq_get(&event_queue, &event, K_FOREVER);
-        process_event(event);
+        k_msgq_get(&event_queue, &entry, K_FOREVER);
+        process_event(&entry);
+        if (entry.conn) {
+            bt_conn_unref(entry.conn);
+        }
     }
 }
 
@@ -122,8 +137,21 @@ void fsm_thread_loop(void) {
  * Button gestures are detected only after firmware initialization.
  * A button press already active during boot is not considered a valid gesture.
  */
-void process_event(event_type_t event) {
+void process_event(const app_event_t *entry) {
+    event_type_t event = entry->type;
     int ret;
+
+    if (event == EV_APP_OTA_ENABLE || event == EV_APP_OTA_DISABLE) {
+        if (current_state == STATE_AUTHENTICATED &&
+            ble_is_authenticated_conn(entry->conn)) {
+            if (event == EV_APP_OTA_ENABLE) {
+                (void)ota_access_enable();
+            } else {
+                ota_access_disable();
+            }
+        }
+        return;
+    }
 
     switch (event) {
         case EV_BATTERY_LEVEL_2:
@@ -377,13 +405,17 @@ void process_event(event_type_t event) {
                 if(is_app_id_empty()){
                     // LOG: No APP_ID stored - saving new APP_ID
                     // New APP_ID
-                    ret = save_received_app_id();
+                    if (!ble_is_current_conn(entry->conn)) {
+                        return;
+                    }
+                    ret = save_received_app_id(entry->app_id);
                     if(ret == 1) {
                         // LOG: Flash write failed while saving new APP_ID - continuing with RAM state
                     }
                     
                     // LOG: New APP_ID saved - sending ACK
                     current_state = STATE_AUTHENTICATED;
+                    ble_mark_authenticated_conn(entry->conn);
                     // It is safe to send because it is already authenticated
                     ret = ble_send_event_secure(COMMAND_ACK);
                     if(ret != 0){
@@ -397,9 +429,13 @@ void process_event(event_type_t event) {
                 } else {
                     // LOG: APP_ID already stored - checking if it matches received APP_ID
                     // Already have an APP_ID
-                    if(check_app_id(storage_get_app_id()) == 0){
+                    if (!ble_is_current_conn(entry->conn)) {
+                        return;
+                    }
+                    if(check_app_id(entry->app_id, storage_get_app_id()) == 0){
                         // LOG: APP_ID matches stored APP_ID - sending ACK
                         current_state = STATE_AUTHENTICATED;
+                        ble_mark_authenticated_conn(entry->conn);
                         ret = ble_send_event_secure(COMMAND_ACK);
                         if(ret != 0){
                             // LOG: Failed to send ACK - continuing without sending

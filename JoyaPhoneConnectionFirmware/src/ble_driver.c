@@ -1,5 +1,6 @@
 #include "ble_driver.h"
 #include "flash_memory.h"
+#include "ota_access.h"
 #include <string.h>
 
 #define JOYA_ADV_NAME_SETUP     "Joya Setup"
@@ -38,6 +39,7 @@ static const struct bt_le_adv_param joya_adv_param = {
 
 /** @brief Current connection */
 static struct bt_conn *current_conn = NULL;
+static bool current_conn_authenticated = false;
 static bool notify_enabled = false;
 static bool battery_change_notify_enabled = false;
 static bool battery_measurement_notify_enabled = false;
@@ -100,6 +102,7 @@ static void on_connected(struct bt_conn *conn, uint8_t err) {
     }
 
     current_conn = bt_conn_ref(conn);
+    current_conn_authenticated = false;
     notify_enabled = false;
     battery_change_notify_enabled = false;
     battery_measurement_notify_enabled = false;
@@ -118,6 +121,7 @@ static void on_disconnected(struct bt_conn *conn, uint8_t reason) {
     if(current_conn == conn) {
         old_conn = current_conn;
         current_conn = NULL;
+        current_conn_authenticated = false;
     }
 
     notify_enabled = false;
@@ -126,6 +130,7 @@ static void on_disconnected(struct bt_conn *conn, uint8_t reason) {
     k_mutex_unlock(&conn_mutex);
 
     if(old_conn) {
+        ota_access_on_disconnect();
         bt_conn_unref(old_conn);
     }
 
@@ -339,12 +344,46 @@ static int ble_send_notify(struct bt_conn * conn, uint8_t event_byte){
  */
 
 int ble_driver_init(void) {
-    int err = bt_enable(NULL);
+    int err = ota_access_init();
+    if (err) {
+        return err;
+    }
+    err = bt_enable(NULL);
     if (err) {
         return err;
     }
     
     return 0;
+}
+
+bool ble_is_current_conn(struct bt_conn *conn)
+{
+    bool valid;
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    valid = conn && current_conn == conn;
+    k_mutex_unlock(&conn_mutex);
+    return valid;
+}
+
+bool ble_is_authenticated_conn(struct bt_conn *conn)
+{
+    bool valid;
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    valid = conn && current_conn == conn && current_conn_authenticated;
+    k_mutex_unlock(&conn_mutex);
+    return valid;
+}
+
+bool ble_mark_authenticated_conn(struct bt_conn *conn)
+{
+    bool valid;
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    valid = conn && current_conn == conn;
+    if (valid) {
+        current_conn_authenticated = true;
+    }
+    k_mutex_unlock(&conn_mutex);
+    return valid;
 }
 
 int ble_start_setup_advertising(bool is_new_connection)

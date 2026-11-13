@@ -8,20 +8,18 @@
 #include <zephyr/bluetooth/gatt.h>
 #include "app_state.h"
 
-#define SIZE_APP_ID 16
-
 /**
  * @brief Save the received application identifier.
  * @return 0 on success, non-zero on failure.
  */
-int save_received_app_id(void);
+int save_received_app_id(const uint8_t *received_app_id);
 
 /**
  * @brief Compare the saved application identifier with the received identifier.
  * @param saved_app_id Pointer to the saved application identifier to compare.
  * @return 0 if the identifiers match, or a non-zero value otherwise.
  */
-int check_app_id(const uint8_t *saved_app_id);
+int check_app_id(const uint8_t *received_app_id, const uint8_t *saved_app_id);
 
 /**
  * @brief Handle CCC (Client Characteristic Configuration) changes.
@@ -89,6 +87,8 @@ enum {
     COMMAND_FRIEND_EMERGENCY = 0x44,
     COMMAND_FRIEND_STOP_EMERGENCY = 0x45,
     END_APP_COMMAND = 0x46,
+    COMMAND_OTA_ENABLE = 0x70,
+    COMMAND_OTA_DISABLE = 0x71,
 };
 
 #endif
