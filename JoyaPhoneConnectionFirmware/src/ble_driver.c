@@ -22,6 +22,10 @@ static struct bt_uuid_128 joya_config_svc_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_C
 
 static struct bt_uuid_128 joya_name_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_NAME_VAL);
 
+static struct bt_uuid_128 joya_battery_svc_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_BATTERY_SERVICE_VAL);
+static struct bt_uuid_128 joya_battery_change_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_BATTERY_CHANGE_VAL);
+static struct bt_uuid_128 joya_battery_measurement_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_BATTERY_MEASUREMENT_VAL);
+
 
 static const struct bt_le_adv_param joya_adv_param = {
 	.options = BT_LE_ADV_OPT_CONNECTABLE |
@@ -35,6 +39,8 @@ static const struct bt_le_adv_param joya_adv_param = {
 /** @brief Current connection */
 static struct bt_conn *current_conn = NULL;
 static bool notify_enabled = false;
+static bool battery_change_notify_enabled = false;
+static bool battery_measurement_notify_enabled = false;
 
 static K_MUTEX_DEFINE(conn_mutex);
 
@@ -50,6 +56,22 @@ static void on_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value) {
     k_mutex_unlock(&conn_mutex);
         
     on_ccc_changed_handler(attr, value);
+}
+
+static void on_battery_change_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
+{
+    ARG_UNUSED(attr);
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    battery_change_notify_enabled = (value == BT_GATT_CCC_NOTIFY);
+    k_mutex_unlock(&conn_mutex);
+}
+
+static void on_battery_measurement_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
+{
+    ARG_UNUSED(attr);
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    battery_measurement_notify_enabled = (value == BT_GATT_CCC_NOTIFY);
+    k_mutex_unlock(&conn_mutex);
 }
 
 static ssize_t on_rx_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -79,6 +101,8 @@ static void on_connected(struct bt_conn *conn, uint8_t err) {
 
     current_conn = bt_conn_ref(conn);
     notify_enabled = false;
+    battery_change_notify_enabled = false;
+    battery_measurement_notify_enabled = false;
 
     k_mutex_unlock(&conn_mutex);
 
@@ -97,6 +121,8 @@ static void on_disconnected(struct bt_conn *conn, uint8_t reason) {
     }
 
     notify_enabled = false;
+    battery_change_notify_enabled = false;
+    battery_measurement_notify_enabled = false;
     k_mutex_unlock(&conn_mutex);
 
     if(old_conn) {
@@ -204,6 +230,19 @@ static struct bt_conn *get_current_conn_ref(void)
 	return conn;
 }
 
+static struct bt_conn *get_battery_conn_ref(bool measurement)
+{
+    struct bt_conn *conn = NULL;
+
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    if (current_conn && (measurement ? battery_measurement_notify_enabled :
+                                      battery_change_notify_enabled)) {
+        conn = bt_conn_ref(current_conn);
+    }
+    k_mutex_unlock(&conn_mutex);
+    return conn;
+}
+
 /**
  * GATT SERVICE DEFINITIONS
  */
@@ -249,6 +288,21 @@ BT_GATT_SERVICE_DEFINE(joya_config_svc,
                            BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,
                            BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
                            on_name_read, on_name_write, NULL)
+);
+
+// BATTERY SERVICE
+BT_GATT_SERVICE_DEFINE(joya_battery_svc,
+    BT_GATT_PRIMARY_SERVICE(&joya_battery_svc_uuid),
+    BT_GATT_CHARACTERISTIC(&joya_battery_change_uuid.uuid,
+                           BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_NONE,
+                           NULL, NULL, NULL),
+    BT_GATT_CCC(on_battery_change_ccc_changed,
+                BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    BT_GATT_CHARACTERISTIC(&joya_battery_measurement_uuid.uuid,
+                           BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_NONE,
+                           NULL, NULL, NULL),
+    BT_GATT_CCC(on_battery_measurement_ccc_changed,
+                BT_GATT_PERM_READ | BT_GATT_PERM_WRITE)
 );
 
 /** @brief Defines the advertising data for the Joya device.
@@ -363,6 +417,51 @@ int ble_send_event_secure(uint8_t event_byte) {
     int ret = ble_send_notify(conn, event_byte);
     bt_conn_unref(conn);
     return ret;
+}
+
+static int ble_send_battery_value(int32_t value, bool measurement)
+{
+    struct bt_conn *conn;
+    const struct bt_uuid *uuid = measurement ? &joya_battery_measurement_uuid.uuid :
+                                               &joya_battery_change_uuid.uuid;
+    const struct bt_gatt_attr *attr;
+    uint8_t payload[2];
+    size_t payload_len;
+    int err;
+
+    if (measurement ? (value < 0 || value > UINT16_MAX) :
+                      (value < 0 || value > 2)) {
+        return -EINVAL;
+    }
+    payload[0] = (uint8_t)value;
+    payload_len = 1;
+    if (measurement) {
+        payload[1] = (uint8_t)((uint32_t)value >> 8);
+        payload_len = 2;
+    }
+    if (get_current_state() != STATE_AUTHENTICATED) {
+        return -EACCES;
+    }
+    conn = get_battery_conn_ref(measurement);
+    if (!conn) {
+        return -ENOTCONN;
+    }
+
+    attr = bt_gatt_find_by_uuid(joya_battery_svc.attrs,
+                                joya_battery_svc.attr_count, uuid);
+    err = attr ? bt_gatt_notify(conn, attr, payload, payload_len) : -EINVAL;
+    bt_conn_unref(conn);
+    return err;
+}
+
+int ble_send_battery_change(uint8_t level)
+{
+    return ble_send_battery_value(level, false);
+}
+
+int ble_send_battery_measurement(int32_t voltage_mv)
+{
+    return ble_send_battery_value(voltage_mv, true);
 }
 
 

@@ -460,19 +460,19 @@ void process_event(event_type_t event) {
                 }
 
             } else if (event == EV_BATTERY_LEVEL_1) {
-                ret = ble_send_event_secure(LOW_BATTERY_LEVEL_1);
+                ret = ble_send_battery_change(1);
                 if (ret != 0){
-                    // LOG: Failed to send LOW_BATTERY_LEVEL_1 - continuing without sending
+                    // LOG: Failed to send battery level 1 - continuing without sending
                 }
             } else if (event == EV_BATTERY_LEVEL_2) {
-                ret = ble_send_event_secure(LOW_BATTERY_LEVEL_2);
+                ret = ble_send_battery_change(2);
                 if (ret != 0){
-                    // LOG: Failed to send LOW_BATTERY_LEVEL_2 - continuing without sending
+                    // LOG: Failed to send battery level 2 - continuing without sending
                 }
             } else if (event == EV_BATTERY_NORMAL) {
-                ret = ble_send_event_secure(BATTERY_NORMAL);
+                ret = ble_send_battery_change(0);
                 if (ret != 0){
-                    // LOG: Failed to send BATTERY_NORMAL - continuing without sending
+                    // LOG: Failed to send normal battery level - continuing without sending
                 }
             }
             break;

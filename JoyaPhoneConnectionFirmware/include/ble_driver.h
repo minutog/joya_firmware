@@ -25,6 +25,11 @@
 #define BT_UUID_JOYA_CONFIG_SERVICE_VAL         BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585200)
 #define BT_UUID_JOYA_NAME_VAL                   BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585201)
 
+// JOYA BATTERY SERVICE: change = 0/1/2; measurement = battery voltage in mV
+#define BT_UUID_JOYA_BATTERY_SERVICE_VAL        BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585300)
+#define BT_UUID_JOYA_BATTERY_CHANGE_VAL         BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585301)
+#define BT_UUID_JOYA_BATTERY_MEASUREMENT_VAL    BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585302)
+
 /**
  * @brief Initialize the Bluetooth stack.
  * @return 0 on success, or a negative error code on failure.
@@ -41,6 +46,12 @@ int ble_driver_init(void);
  * Note: only checks if the connection is active and notifications are enabled. It does not check if the app is authenticated. This responsability is delegated to the caller.
  */
 int ble_send_event_secure(uint8_t event_byte);
+
+/** Notify the confirmed battery level on the change characteristic. */
+int ble_send_battery_change(uint8_t level);
+
+/** Notify battery voltage in mV as an unsigned 16-bit little-endian value. */
+int ble_send_battery_measurement(int32_t voltage_mv);
 
 /**
  * @brief Start advertising for a new connection or reconnection.

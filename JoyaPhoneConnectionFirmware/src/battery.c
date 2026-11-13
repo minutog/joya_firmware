@@ -1,5 +1,6 @@
 #include "battery.h"
 #include "app_state.h"
+#include "ble_driver.h"
 
 #include <errno.h>
 #include <string.h>
@@ -268,6 +269,11 @@ static void battery_monitor_work_handler(struct k_work *work)
 					K_MSEC(BATTERY_MONITOR_INTERVAL_MS));
 	}
 	k_mutex_unlock(&battery_monitor_lock);
+
+	/* Enviar cada lectura válida, incluidas las muestras de verificación. */
+	if (err == 0) {
+		(void)ble_send_battery_measurement(voltage_mv);
+	}
 }
 
 int battery_monitor_start(void)
