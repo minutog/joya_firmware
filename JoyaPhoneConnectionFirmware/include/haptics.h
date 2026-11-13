@@ -46,6 +46,7 @@ enum haptics_pattern {
 	HAPTICS_PATTERN_EMERGENCY_START,
 	HAPTICS_PATTERN_FOLLOW_ME,
     HAPTICS_PATTERN_FRIEND_EMERGENCY,
+	HAPTICS_PATTERN_SUSPEND,
 	HAPTICS_PATTERN_FACTORY_RESET,
 	HAPTICS_PATTERN_ACK_CONNECTION,
 };
@@ -77,6 +78,10 @@ bool haptics_is_ready(void);
  * @param pattern The haptic pattern to play.
  */
 void haptics_play(enum haptics_pattern pattern);
+
+/** Start a pattern and notify from the haptics work item when its final step ends. */
+int haptics_play_with_completion(enum haptics_pattern pattern,
+				 void (*completion)(void));
 
 /**
  * @brief Play one haptic effect.

@@ -1,5 +1,6 @@
 #include "app_state.h"
 #include "ota_access.h"
+#include <zephyr/sys/reboot.h>
 
 /** @brief Array of retry intervals for emergency events in milliseconds */
 const uint32_t EMERGENCY_RETRY_MS[] = {EMERGENCY_RETRY_INITIAL_MS, EMERGENCY_RETRY_FAST_MS, EMERGENCY_RETRY_MEDIUM_MS, EMERGENCY_RETRY_SLOW_MS, EMERGENCY_RETRY_VERY_SLOW_MS};
@@ -18,6 +19,26 @@ K_MSGQ_DEFINE(event_queue, sizeof(app_event_t), 20, 4);
 K_THREAD_DEFINE(fsm_thread_id, 4098, fsm_thread_loop, NULL, NULL, NULL, 5, 0, 0);
 
 static bool emergency_alerts_active = false;
+static bool reboot_pending;
+static bool suspended_idle;
+static bool hold_blocked;
+static bool hold_released;
+static bool hold_pattern_done;
+static enum {
+    HOLD_NONE,
+    HOLD_SUSPEND,
+    HOLD_FACTORY_RESET,
+} hold_action;
+
+static void suspend_pattern_finished(void)
+{
+    (void)add_event(EV_HAPTICS_SUSPEND_DONE);
+}
+
+static void factory_pattern_finished(void)
+{
+    (void)add_event(EV_HAPTICS_FACTORY_DONE);
+}
 
 /**
  * PRIVATE FUNCTIONS
@@ -43,6 +64,26 @@ static void emergency_stop_alerts(void)
     emergency_alerts_active = false;
     k_work_cancel_delayable(&emergency_retry_work);
     reset_emergency_retry_index();
+}
+
+static void factory_reset_and_reboot(void)
+{
+    reboot_pending = true;
+    current_state = STATE_UNPAIRED;
+    (void)ble_disconnect();
+    emergency_stop_alerts();
+    (void)storage_factory_reset();
+    sys_reboot(SYS_REBOOT_COLD);
+}
+
+static void enter_unpaired_idle(void)
+{
+    k_work_cancel_delayable(&connection_timeout_work);
+    emergency_stop_alerts();
+    ota_access_disable();
+    suspended_idle = true;
+    current_state = STATE_UNPAIRED;
+    (void)ble_disconnect();
 }
 
 
@@ -141,6 +182,90 @@ void process_event(const app_event_t *entry) {
     event_type_t event = entry->type;
     int ret;
 
+    if (reboot_pending) {
+        return;
+    }
+
+    if (suspended_idle && event != EV_BTN_2_PULSE &&
+        event != EV_BTN_FACTORY_THRESHOLD &&
+        event != EV_BTN_FACTORY_RESET &&
+        event != EV_HAPTICS_FACTORY_DONE) {
+        return;
+    }
+
+    if (hold_blocked && event == EV_BTN_FACTORY_RESET) {
+        hold_blocked = false;
+        return;
+    }
+
+    if (event == EV_BTN_SUSPEND_REQUEST) {
+        /* A short hold enters the idle state only after release and haptic feedback. */
+        if (ota_access_is_update_active()) {
+            return;
+        }
+        hold_action = HOLD_SUSPEND;
+        hold_released = true;
+        hold_pattern_done = false;
+        ret = haptics_play_with_completion(HAPTICS_PATTERN_SUSPEND,
+                                           suspend_pattern_finished);
+        if (ret != 0) {
+            enter_unpaired_idle();
+            hold_action = HOLD_NONE;
+            hold_released = false;
+        }
+        return;
+    }
+
+    if (event == EV_BTN_FACTORY_THRESHOLD) {
+        /* Factory reset remains a deliberate 15-second recovery gesture. */
+        if (ota_access_is_update_active()) {
+            hold_action = HOLD_NONE;
+            hold_blocked = true;
+            return;
+        }
+        hold_blocked = false;
+        hold_action = HOLD_FACTORY_RESET;
+        hold_released = false;
+        hold_pattern_done = false;
+        haptics_stop();
+        ret = haptics_play_with_completion(HAPTICS_PATTERN_FACTORY_RESET,
+                                           factory_pattern_finished);
+        if (ret != 0) {
+            hold_pattern_done = true;
+        }
+        return;
+    }
+
+    if (event == EV_HAPTICS_SUSPEND_DONE && hold_action == HOLD_SUSPEND) {
+        hold_pattern_done = true;
+    } else if (event == EV_HAPTICS_FACTORY_DONE &&
+               hold_action == HOLD_FACTORY_RESET) {
+        hold_pattern_done = true;
+    } else if (event == EV_BTN_FACTORY_RESET &&
+               hold_action == HOLD_FACTORY_RESET) {
+        hold_released = true;
+    }
+
+    if (hold_released && hold_pattern_done) {
+        if (ota_access_is_update_active()) {
+            hold_action = HOLD_NONE;
+            hold_released = false;
+            return;
+        }
+        if (hold_action == HOLD_FACTORY_RESET) {
+            factory_reset_and_reboot();
+        } else if (hold_action == HOLD_SUSPEND) {
+            enter_unpaired_idle();
+        }
+        hold_action = HOLD_NONE;
+        hold_released = false;
+    }
+    if (event == EV_HAPTICS_SUSPEND_DONE ||
+        event == EV_HAPTICS_FACTORY_DONE ||
+        event == EV_BTN_FACTORY_RESET) {
+        return;
+    }
+
     if (event == EV_APP_OTA_ENABLE || event == EV_APP_OTA_DISABLE) {
         if (current_state == STATE_AUTHENTICATED &&
             ble_is_authenticated_conn(entry->conn)) {
@@ -161,25 +286,6 @@ void process_event(const app_event_t *entry) {
             break;
         default:
             break;
-    }
-
-    /*
-     * Note: factory reset has a higher priority that everything else
-     * to fulfill the requirement updated in previous conversation.
-     * This is a point to consider in future updates
-     */
-    if (event == EV_BTN_FACTORY_RESET) {
-        // LOG: Factory reset button pressed - resetting device
-        current_state = STATE_UNPAIRED;
-        ble_disconnect();
-        ret = storage_factory_reset();
-        emergency_stop_alerts();
-        if(ret == 1) {
-            // LOG: Flash write failed while resetting flash storage - reseting only RAM state
-        }
-
-        haptics_play(HAPTICS_PATTERN_FACTORY_RESET);
-        return;
     }
 
     if (event == EV_BTN_EMERGENCY) {
@@ -350,10 +456,14 @@ void process_event(const app_event_t *entry) {
         case STATE_UNPAIRED:
             if (event == EV_BTN_2_PULSE) {
                 // LOG: Entering setup mode (starting ADV)
-                current_state = STATE_SETUP_MODE;
-                haptics_play(HAPTICS_PATTERN_SETUP_MODE);
-                ble_start_setup_advertising(is_app_id_empty());
-                k_work_reschedule(&connection_timeout_work, K_MSEC(BLE_SETUP_TIMEOUT_MS)); 
+                ret = ble_start_setup_advertising(is_app_id_empty());
+                if (ret == 0) {
+                    suspended_idle = false;
+                    current_state = STATE_SETUP_MODE;
+                    haptics_play(HAPTICS_PATTERN_SETUP_MODE);
+                    k_work_reschedule(&connection_timeout_work,
+                                      K_MSEC(BLE_SETUP_TIMEOUT_MS));
+                }
             }
             break;
 
@@ -517,6 +627,12 @@ void process_event(const app_event_t *entry) {
             if (event == EV_BLE_CONNECTED) {
                 // LOG: BLE connected - waiting for notification enable
                 current_state = STATE_WAITING_NOTIFICATION_ENABLE;
+            } else if (event == EV_BTN_2_PULSE) {
+                /* Let the user retry advertising if the restart after disconnect failed. */
+                ret = ble_start_setup_advertising(false);
+                if (ret == 0) {
+                    haptics_play(HAPTICS_PATTERN_SETUP_MODE);
+                }
             } 
             break;
 

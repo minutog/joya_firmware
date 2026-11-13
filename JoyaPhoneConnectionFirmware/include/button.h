@@ -12,6 +12,7 @@ extern struct k_msgq event_queue;
 #define DEBOUNTE_TIME_MS 50
 #define CLICK_WINDOW_MS 900
 #define BUTTON_ROUTINE_CANCEL_HOLD_MS 500
+#define BUTTON_SUSPEND_HOLD_MS 5000 /* action on release, before factory threshold */
 #define BUTTON_FACTORY_RESET_HOLD_MS 15000
 
 /**

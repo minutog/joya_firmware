@@ -130,3 +130,13 @@ void ota_access_on_disconnect(void)
     close_service_locked();
     k_mutex_unlock(&ota_mutex);
 }
+
+bool ota_access_is_update_active(void)
+{
+    bool active;
+
+    k_mutex_lock(&ota_mutex, K_FOREVER);
+    active = uploading || upload_complete;
+    k_mutex_unlock(&ota_mutex);
+    return active;
+}

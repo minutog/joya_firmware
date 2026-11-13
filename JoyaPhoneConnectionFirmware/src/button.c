@@ -13,6 +13,7 @@ static struct gpio_callback button_cb_data;
 
 static struct k_work_delayable debounce_work;
 static struct k_work_delayable click_window_work;
+static struct k_work_delayable factory_hold_work;
 
 static void debounce_work_handler(struct k_work *work);
 static void click_window_work_handler(struct k_work *work);
@@ -22,10 +23,32 @@ static atomic_t pulse_count;
 
 static bool last_stable_pressed = false;
 static bool press_active = false;
+static bool factory_threshold_sent;
 
 static void send_button_event(event_type_t event)
 {
 	add_event(event);
+}
+
+static void factory_hold_work_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	int pressed = gpio_pin_get_dt(&button);
+	if (pressed <= 0 || !press_active || factory_threshold_sent) {
+		return;
+	}
+	uint32_t elapsed_ms = k_uptime_get_32() - press_start_ms;
+	if (elapsed_ms < BUTTON_FACTORY_RESET_HOLD_MS) {
+		(void)k_work_reschedule(&factory_hold_work,
+				 K_MSEC(BUTTON_FACTORY_RESET_HOLD_MS - elapsed_ms));
+		return;
+	}
+
+	factory_threshold_sent = true;
+	(void)k_work_cancel_delayable(&click_window_work);
+	atomic_set(&pulse_count, 0);
+	send_button_event(EV_BTN_FACTORY_THRESHOLD);
 }
 
 void button_isr_handler(const struct device *dev,
@@ -61,6 +84,9 @@ static void debounce_work_handler(struct k_work *work)
 	if (pressed) {
 		press_start_ms = now_ms;
 		press_active = true;
+		factory_threshold_sent = false;
+		(void)k_work_reschedule(&factory_hold_work,
+					 K_MSEC(BUTTON_FACTORY_RESET_HOLD_MS));
 
 		if (atomic_get(&pulse_count) > 0) {
 			(void)k_work_cancel_delayable(&click_window_work);
@@ -74,18 +100,30 @@ static void debounce_work_handler(struct k_work *work)
 	}
 
 	press_active = false;
+	(void)k_work_cancel_delayable(&factory_hold_work);
 
 	uint32_t press_time_ms = now_ms - press_start_ms;
+	if (press_time_ms >= BUTTON_FACTORY_RESET_HOLD_MS || factory_threshold_sent) {
+		(void)k_work_cancel_delayable(&click_window_work);
+		atomic_set(&pulse_count, 0);
+		if (!factory_threshold_sent) {
+			send_button_event(EV_BTN_FACTORY_THRESHOLD);
+		}
+		send_button_event(EV_BTN_FACTORY_RESET);
+		return;
+	}
+	if (press_time_ms >= BUTTON_SUSPEND_HOLD_MS) {
+		(void)k_work_cancel_delayable(&click_window_work);
+		atomic_set(&pulse_count, 0);
+		send_button_event(EV_BTN_SUSPEND_REQUEST);
+		return;
+	}
 
 	if (press_time_ms >= BUTTON_ROUTINE_CANCEL_HOLD_MS) {
 		(void)k_work_cancel_delayable(&click_window_work);
 		atomic_set(&pulse_count, 0);
 
-		if (press_time_ms >= BUTTON_FACTORY_RESET_HOLD_MS) {
-			send_button_event(EV_BTN_FACTORY_RESET);
-		} else {
-			send_button_event(EV_BTN_LONG_PRESS);
-		}
+		send_button_event(EV_BTN_LONG_PRESS);
 
 		return;
 	}
@@ -136,10 +174,12 @@ int button_init(void)
 
 	last_stable_pressed = initial_pressed != 0;
 	press_active = false;
+	factory_threshold_sent = false;
 	atomic_set(&pulse_count, 0);
 
 	k_work_init_delayable(&debounce_work, debounce_work_handler);
 	k_work_init_delayable(&click_window_work, click_window_work_handler);
+	k_work_init_delayable(&factory_hold_work, factory_hold_work_handler);
 
 	gpio_init_callback(&button_cb_data,
 			   button_isr_handler,

@@ -33,6 +33,7 @@ static bool haptic_enabled;
 
 static enum haptics_pattern active_pattern = HAPTICS_PATTERN_NONE;
 static size_t active_step_index;
+static void (*pattern_completion)(void);
 
 static void haptics_pattern_work_handler(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(haptics_pattern_work, haptics_pattern_work_handler);
@@ -112,6 +113,16 @@ static const struct haptic_step pattern_factory_reset[] = {
 	{ 200, HAPTIC_RTP_INTENSITY},
 	{ 100, 0},
 };
+
+static const struct haptic_step pattern_suspend[] = {
+	{ 200, HAPTIC_RTP_INTENSITY},
+	{ 100, 0},
+	{ 700, HAPTIC_RTP_INTENSITY},
+	{ 100, 0},
+	{ 200, HAPTIC_RTP_INTENSITY},
+	{ 100, 0},
+};
+
 
 /**
  * @brief Write one byte to a DRV2605 register.
@@ -340,6 +351,10 @@ static const struct haptic_step *get_pattern_steps(enum haptics_pattern pattern,
 		*step_count = ARRAY_SIZE(pattern_factory_reset);
 		return pattern_factory_reset;
 
+	case HAPTICS_PATTERN_SUSPEND:
+		*step_count = ARRAY_SIZE(pattern_suspend);
+		return pattern_suspend;
+
 	case HAPTICS_PATTERN_NONE:
 	default:
 		*step_count = 0;
@@ -385,12 +400,22 @@ static void haptics_pattern_work_handler(struct k_work *work)
 
 	if (!get_next_step(&amplitude, &duration_ms)) {
 		drv2605_idle();
+		void (*completion)(void) = pattern_completion;
+		pattern_completion = NULL;
+		if (completion) {
+			completion();
+		}
 		return;
 	}
 
 	err = drv2605_set_rtp(amplitude);
 	if (err < 0) {
 		drv2605_idle();
+		void (*completion)(void) = pattern_completion;
+		pattern_completion = NULL;
+		if (completion) {
+			completion();
+		}
 		return;
 	}
 
@@ -527,10 +552,11 @@ int haptics_init(void)
  */
 void haptics_play_effect(enum haptics_effect effect)
 {
-    if (!haptics_ready) {
+	if (!haptics_ready || pattern_completion) {
         return;
     }
 
+	pattern_completion = NULL;
 	(void)k_work_cancel_delayable_sync(&haptics_pattern_work, &pattern_work_sync);
 	(void)k_work_cancel_delayable_sync(&haptics_effect_work, &effect_work_sync);
 	int err = drv2605_wake();
@@ -554,29 +580,45 @@ void haptics_play_effect(enum haptics_effect effect)
  * @brief Start a haptic pattern from its first step.
  * @param pattern Pattern to play, or HAPTICS_PATTERN_NONE to stop playback.
  */
-void haptics_play(enum haptics_pattern pattern)
+int haptics_play_with_completion(enum haptics_pattern pattern,
+				 void (*completion)(void))
 {
 	if (!haptics_ready) {
-        // (improvement): decide what to do if haptics is not initialized (e.g., log error, return error, etc.)
-        return;
+		return -ENODEV;
     }
+	if (pattern_completion && !completion) {
+		return -EBUSY;
+	}
 	
 	if (pattern == HAPTICS_PATTERN_NONE) {
 		haptics_stop();
-		return;
+		return -EINVAL;
 	}
 
+	pattern_completion = NULL;
 	(void)k_work_cancel_delayable_sync(&haptics_pattern_work, &pattern_work_sync);
 	(void)k_work_cancel_delayable_sync(&haptics_effect_work, &effect_work_sync);
-	if (drv2605_wake() < 0) {
+	int err = drv2605_wake();
+	if (err < 0) {
 		drv2605_idle();
-		return;
+		return err;
 	}
 
 	active_pattern = pattern;
 	active_step_index = 0;
+	pattern_completion = completion;
 
-	(void)k_work_schedule(&haptics_pattern_work, K_NO_WAIT);
+	if (k_work_schedule(&haptics_pattern_work, K_NO_WAIT) <= 0) {
+		pattern_completion = NULL;
+		(void)drv2605_idle();
+		return -EIO;
+	}
+	return 0;
+}
+
+void haptics_play(enum haptics_pattern pattern)
+{
+	(void)haptics_play_with_completion(pattern, NULL);
 }
 
 /**
@@ -584,6 +626,7 @@ void haptics_play(enum haptics_pattern pattern)
  */
 void haptics_stop(void)
 {
+	pattern_completion = NULL;
 	(void)k_work_cancel_delayable_sync(&haptics_pattern_work, &pattern_work_sync);
 	(void)k_work_cancel_delayable_sync(&haptics_effect_work, &effect_work_sync);
 
