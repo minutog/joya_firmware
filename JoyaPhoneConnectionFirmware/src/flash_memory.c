@@ -5,6 +5,13 @@ static bool joya_is_in_emergency = false;
 
 static bool storage_persistent_available = false;
 
+static char joya_name[JOYA_NAME_MAX_LEN + 1] = JOYA_ADV_NAME_DEFAULT;
+
+
+const char *storage_get_name(void){
+    return joya_name;
+}
+
 bool storage_is_persistent_available(void) {
     return storage_persistent_available;
 }
@@ -63,6 +70,33 @@ static int app_settings_set(const char *name, size_t len, settings_read_cb read_
         return 0;
     }
 
+    // Evaluate DEVICE NAME
+    if (settings_name_steq(name, "name", &next) && !next) {
+
+        if (len == 0 || len > JOYA_NAME_MAX_LEN + 1) {
+            return -EINVAL;
+        }
+
+        char temp[JOYA_NAME_MAX_LEN + 1];
+
+        rc = read_cb(cb_arg, temp, len);
+        if (rc < 0) {
+            return rc;
+        }
+
+        if (rc != len || temp[len - 1] != '\0') {
+            return -EINVAL;
+        }
+
+        if (strlen(temp) != len - 1) {
+            return -EINVAL;
+        }
+
+        memcpy(joya_name, temp, len);
+
+        return 0;
+    }
+
     return -ENOENT;
 }
 
@@ -96,6 +130,7 @@ int storage_init(void)
 
     memset(joya_app_id, 0, SIZE_APP_ID);
     joya_is_in_emergency = false;
+    strcpy(joya_name, JOYA_ADV_NAME_DEFAULT);
 
     int err = settings_subsys_init();
     if (err) {
@@ -108,11 +143,16 @@ int storage_init(void)
     err = settings_load();
     if (err) {
         /*
-         * Non-critical error: continue with RAM defaults.
+         * Settings may have been partially loaded.
+         * Restore safe RAM defaults.
          */
+        memset(joya_app_id, 0, SIZE_APP_ID);
+        joya_is_in_emergency = false;
+        strcpy(joya_name, JOYA_ADV_NAME_DEFAULT);
+
         return err;
     }
-    
+
     storage_persistent_available = true;
 
     return 0;
@@ -171,28 +211,69 @@ int storage_save_emergency_state(bool is_active)
     return 0;
 }
 
-/**
- * Even if the flash write fails, we still clear the RAM state 
- * to ensure that the device does not operate with stale data.
- */
-int storage_factory_reset(void)
-{    
-    memset(joya_app_id, 0, sizeof(joya_app_id));
-    joya_is_in_emergency = false;
-
-    if(!storage_persistent_available) {
-        return 1; // Return an error code indicating that flash is not available
+int storage_save_name(const char *name)
+{
+    if (name == NULL) {
+        return -EINVAL;
     }
 
-    int ret = settings_delete("joya/app_id");
-    if (ret != 0) {
+    size_t len = strnlen(name, JOYA_NAME_MAX_LEN + 1);
+
+    if (len == 0 || len > JOYA_NAME_MAX_LEN) {
+        return -EINVAL;
+    }
+
+    // Update RAM first
+    memcpy(joya_name, name, len + 1);
+
+    if (!storage_persistent_available) {
         return 1;
     }
 
-    ret = settings_delete("joya/emergency");
+    int ret = settings_save_one("joya/name",
+                                joya_name,
+                                len + 1);
+
     if (ret != 0) {
         return 1;
     }
 
     return 0;
+}
+
+/**
+ * Even if the flash write fails, we still clear the RAM state 
+ * to ensure that the device does not operate with stale data.
+ */
+int storage_factory_reset(void)
+{
+    /*
+     * Clear RAM state first, regardless of Flash availability.
+     */
+    memset(joya_app_id, 0, sizeof(joya_app_id));
+    joya_is_in_emergency = false;
+    strcpy(joya_name, JOYA_ADV_NAME_DEFAULT);
+
+    if (!storage_persistent_available) {
+        return 1;
+    }
+
+    /*
+     * Attempt to delete all settings, even if one operation fails.
+     */
+    int result = 0;
+
+    if (settings_delete("joya/app_id") != 0) {
+        result = 1;
+    }
+
+    if (settings_delete("joya/emergency") != 0) {
+        result = 1;
+    }
+
+    if (settings_delete("joya/name") != 0) {
+        result = 1;
+    }
+
+    return result;
 }

@@ -1,10 +1,21 @@
 #ifndef FLASH_MEMORY_H
 #define FLASH_MEMORY_H
 
-#include <zephyr/settings/settings.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <string.h>
-
 #include "app_comm.h"
+
+#include <zephyr/settings/settings.h>
+
+#define JOYA_ADV_NAME_DEFAULT "Joya"
+#define JOYA_NAME_PREFIX      "Joya de "
+#define JOYA_NAME_MAX_LEN     31
+
+
+const char *storage_get_name(void);
+int storage_save_name(const char *name);
 
 /**
  * @brief Initialize storage and load saved settings.

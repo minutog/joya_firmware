@@ -1,14 +1,27 @@
 #include "ble_driver.h"
+#include "flash_memory.h"
+#include <string.h>
 
-#define JOYA_ADV_NAME_SETUP      "Joya Setup"
-#define JOYA_ADV_NAME_RECONNECT  "Joya"
+#define JOYA_ADV_NAME_SETUP     "Joya Setup"
+
+#define JOYA_SUFFIX_MAX_LEN     (JOYA_NAME_MAX_LEN - (sizeof(JOYA_NAME_PREFIX) - 1))
 
 
-/** @brief UUIDs for the GATT service */
-static struct bt_uuid_128 joya_svc_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_SERVICE_VAL);
-static struct bt_uuid_128 joya_tx_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_TX_VAL);
-static struct bt_uuid_128 joya_rx_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_RX_VAL);
-static struct bt_uuid_128 joya_rx_auth_uuid  = BT_UUID_INIT_128(BT_UUID_JOYA_RX_AUTH_VAL);
+/** @brief UUIDs for the GATT services and characteristics */
+static struct bt_uuid_128 joya_commands_svc_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_COMMANDS_SERVICE_VAL);
+
+static struct bt_uuid_128 joya_tx_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_TX_VAL);
+
+static struct bt_uuid_128 joya_rx_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_RX_VAL);
+
+static struct bt_uuid_128 joya_auth_svc_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_AUTH_SERVICE_VAL);
+
+static struct bt_uuid_128 joya_rx_auth_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_RX_AUTH_VAL);
+
+static struct bt_uuid_128 joya_config_svc_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_CONFIG_SERVICE_VAL);
+
+static struct bt_uuid_128 joya_name_uuid = BT_UUID_INIT_128(BT_UUID_JOYA_NAME_VAL);
+
 
 static const struct bt_le_adv_param joya_adv_param = {
 	.options = BT_LE_ADV_OPT_CONNECTABLE |
@@ -94,6 +107,80 @@ static void on_disconnected(struct bt_conn *conn, uint8_t reason) {
     on_disconnected_handler(conn, reason);
 }
 
+static ssize_t on_name_write(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+    ARG_UNUSED(conn);
+    ARG_UNUSED(attr);
+    ARG_UNUSED(flags);
+
+    // Check authentication
+    if (get_current_state() != STATE_AUTHENTICATED) {
+        return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
+    }
+
+    // Validate offset
+    if (offset != 0) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
+
+    // Validate received name
+    if (len == 0 || len > JOYA_SUFFIX_MAX_LEN) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+
+    if (memchr(buf, '\0', len) != NULL) {
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+
+    // Build full name
+    char name[JOYA_NAME_MAX_LEN + 1];
+
+    memcpy(name, JOYA_NAME_PREFIX, sizeof(JOYA_NAME_PREFIX) - 1);
+    memcpy(name + sizeof(JOYA_NAME_PREFIX) - 1, buf, len);
+
+    name[sizeof(JOYA_NAME_PREFIX) - 1 + len] = '\0';
+
+    // Update Bluetooth device name
+    int err = bt_set_name(name);
+    if (err) {
+        return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+    }
+
+    // Update RAM and persist to Flash
+    err = storage_save_name(name);
+
+    if (err < 0) {
+        return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+    }
+
+    // Flash failure is non-critical (RAM was updated)
+    return len;
+}
+
+static ssize_t on_name_read(struct bt_conn *conn,
+                            const struct bt_gatt_attr *attr,
+                            void *buf, uint16_t len, uint16_t offset)
+{
+    ARG_UNUSED(attr);
+
+    const char *name = storage_get_name();
+    const size_t prefix_len = sizeof(JOYA_NAME_PREFIX) - 1;
+
+    // No custom name configured
+    if (strcmp(name, JOYA_ADV_NAME_DEFAULT) == 0) {
+        return bt_gatt_attr_read(conn, attr, buf, len, offset, "", 0);
+    }
+
+    // Return only the suffix
+    if (strncmp(name, JOYA_NAME_PREFIX, prefix_len) != 0) {
+        return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+    }
+
+    const char *suffix = name + prefix_len;
+
+    return bt_gatt_attr_read(conn, attr, buf, len, offset,
+                             suffix, strlen(suffix));
+}
+
 BT_CONN_CB_DEFINE(conn_callbacks) = {
     .connected = on_connected,
     .disconnected = on_disconnected,
@@ -118,32 +205,50 @@ static struct bt_conn *get_current_conn_ref(void)
 }
 
 /**
- * GATT SERVICE DEFINITION
+ * GATT SERVICE DEFINITIONS
  */
 
+// COMMANDS SERVICE
+BT_GATT_SERVICE_DEFINE(joya_commands_svc,
+    BT_GATT_PRIMARY_SERVICE(&joya_commands_svc_uuid),
 
-BT_GATT_SERVICE_DEFINE(joya_svc,
-    BT_GATT_PRIMARY_SERVICE(&joya_svc_uuid),
-    
-    // TX Characteristic UUID: supports Notifications
+    // TX: Notifications
     BT_GATT_CHARACTERISTIC(&joya_tx_uuid.uuid,
                            BT_GATT_CHRC_NOTIFY,
                            BT_GATT_PERM_NONE,
                            NULL, NULL, NULL),
 
-    BT_GATT_CCC(on_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
-    
-    // RX Characteristic UUID: supports Write and Write Without Response
+    BT_GATT_CCC(on_ccc_changed,
+                BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+
+    // RX: Write and Write Without Response
     BT_GATT_CHARACTERISTIC(&joya_rx_uuid.uuid,
                            BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
                            BT_GATT_PERM_WRITE,
-                           NULL, on_rx_write, NULL),
+                           NULL, on_rx_write, NULL)
+);
 
-    // RX AUTH Characteristic UUID: supports Write and Write Without Response (improvement: maybe add some security requirements)
+
+// AUTHENTICATION SERVICE
+BT_GATT_SERVICE_DEFINE(joya_auth_svc,
+    BT_GATT_PRIMARY_SERVICE(&joya_auth_svc_uuid),
+
+    // AUTH RX: Write and Write Without Response
     BT_GATT_CHARACTERISTIC(&joya_rx_auth_uuid.uuid,
                            BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
                            BT_GATT_PERM_WRITE,
                            NULL, on_rx_auth_write, NULL)
+);
+
+// CONFIGURATION SERVICE
+BT_GATT_SERVICE_DEFINE(joya_config_svc,
+    BT_GATT_PRIMARY_SERVICE(&joya_config_svc_uuid),
+
+    // Device Name: Read / Write
+    BT_GATT_CHARACTERISTIC(&joya_name_uuid.uuid,
+                           BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,
+                           BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+                           on_name_read, on_name_write, NULL)
 );
 
 /** @brief Defines the advertising data for the Joya device.
@@ -162,9 +267,9 @@ static int ble_send_notify(struct bt_conn * conn, uint8_t event_byte){
 	const struct bt_gatt_attr *attr;
 	int err;
 
-	attr = bt_gatt_find_by_uuid(joya_svc.attrs,
-				    joya_svc.attr_count,
-				    &joya_tx_uuid.uuid);
+	attr = bt_gatt_find_by_uuid(joya_commands_svc.attrs,
+                           joya_commands_svc.attr_count,
+                           &joya_tx_uuid.uuid);
 	if (!attr) {
 		return -EINVAL;
 	}
@@ -190,29 +295,34 @@ int ble_driver_init(void) {
 
 int ble_start_setup_advertising(bool is_new_connection)
 {
-	int err;
+    int err;
 
-	err = bt_le_adv_stop();
-	if (err < 0 && err != -EALREADY) {
-		// (improvement): decide what to do if stopping advertising fails (e.g., retry, log error, etc.)
-	}
+    err = bt_le_adv_stop();
+    if (err < 0 && err != -EALREADY) {
+        // TODO: Handle advertising stop failure
+        return err;
+    }
 
-	if (is_new_connection) {
-		err = bt_set_name(JOYA_ADV_NAME_SETUP);
-	} else {
-		err = bt_set_name(JOYA_ADV_NAME_RECONNECT);
-	}
-	if (err < 0) {
-		return err;
-	}
+    // Select advertising name
+    if (is_new_connection) {
+        err = bt_set_name(JOYA_ADV_NAME_SETUP);
+    } else {
+        err = bt_set_name(storage_get_name());
+    }
 
-	err = bt_le_adv_start(&joya_adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
-	if (err < 0) {
-		return err;
-	}
+    if (err < 0) {
+        return err;
+    }
 
+    err = bt_le_adv_start(&joya_adv_param,
+                          ad, ARRAY_SIZE(ad),
+                          NULL, 0);
 
-	return 0;
+    if (err < 0) {
+        return err;
+    }
+
+    return 0;
 }
 
 int ble_start_setup_advertising_backup(void)
