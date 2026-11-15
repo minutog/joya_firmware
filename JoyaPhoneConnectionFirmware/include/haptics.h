@@ -66,6 +66,8 @@ int haptics_init(void);
  * @brief Stop the active haptic pattern or effect.
  */
 void haptics_stop(void);
+/* Stop playback and prevent or allow all future patterns and effects. */
+void haptics_set_allowed(bool allowed);
 
 /**
  * @brief Check whether the haptic driver is ready.

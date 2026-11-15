@@ -1,4 +1,5 @@
 #include "ota_access.h"
+#include "app_state.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/mgmt/mcumgr/mgmt/callbacks.h>
@@ -37,6 +38,7 @@ static enum mgmt_cb_return image_status_handler(uint32_t event,
                                                  bool *abort_more, void *data,
                                                  size_t data_size)
 {
+    bool stopped_without_pending = false;
     ARG_UNUSED(rc);
     ARG_UNUSED(group);
     ARG_UNUSED(abort_more);
@@ -55,6 +57,7 @@ static enum mgmt_cb_return image_status_handler(uint32_t event,
     } else if (event == MGMT_EVT_OP_IMG_MGMT_DFU_STOPPED) {
         uploading = false;
         if (!upload_complete) {
+            stopped_without_pending = true;
             if (close_requested) {
                 (void)k_work_reschedule(&idle_close_work, K_SECONDS(1));
             } else if (service_enabled) {
@@ -63,6 +66,9 @@ static enum mgmt_cb_return image_status_handler(uint32_t event,
         }
     }
     k_mutex_unlock(&ota_mutex);
+    if (stopped_without_pending) {
+        (void)add_event(EV_OTA_UPDATE_STOPPED);
+    }
     return prev_status;
 }
 

@@ -7,6 +7,7 @@
 #define BATTERY_VERIFY_INTERVAL_MS  10000
 #define BATTERY_VERIFY_SAMPLES      6
 #define BATTERY_VERIFY_MIN_VOTES    5
+#define BATTERY_RECHECK_INTERVAL_MS 1000
 
 #define BATTERY_LEVEL_1_MV          3500
 #define BATTERY_LEVEL_2_MV          3400
@@ -26,5 +27,10 @@ int battery_monitor_stop(void);
 
 /* Devuelve -ENODATA hasta la primera medición periódica exitosa. */
 int battery_get_last_voltage_mv(int32_t *voltage_mv);
+
+/* Request six fresh ADC samples; completion arrives as EV_BATTERY_RECHECK_DONE. */
+int battery_request_recheck(void);
+/* Return the verified level (0/1/2), or -ENODATA without five valid samples. */
+int battery_get_recheck_level(void);
 
 #endif /* JOYA_BATTERY_H_ */

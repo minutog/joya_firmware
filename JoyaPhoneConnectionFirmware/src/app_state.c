@@ -1,4 +1,5 @@
 #include "app_state.h"
+#include "battery.h"
 #include "ota_access.h"
 #include <errno.h>
 #include <zephyr/sys/reboot.h>
@@ -26,6 +27,8 @@ K_THREAD_DEFINE(fsm_thread_id, 4098, fsm_thread_loop, NULL, NULL, NULL, 5, 0, 0)
 static bool emergency_alerts_active = false;
 static bool reboot_pending;
 static bool suspended_idle;
+static bool critical_idle;
+static int battery_level = -1;
 static bool hold_blocked;
 static bool hold_released;
 static bool hold_pattern_done;
@@ -91,6 +94,31 @@ static void enter_unpaired_idle(void)
     suspended_idle = true;
     current_state = STATE_UNPAIRED;
     (void)ble_disconnect();
+}
+
+static void enter_critical_idle(void)
+{
+    critical_idle = true;
+    if (hold_action == HOLD_SUSPEND) {
+        hold_action = HOLD_NONE;
+        hold_released = false;
+        hold_pattern_done = false;
+    }
+    if (!suspended_idle) {
+        enter_unpaired_idle();
+    }
+}
+
+static void start_setup_from_idle(void)
+{
+    int ret = ble_start_setup_advertising(is_app_id_empty());
+    if (ret == 0) {
+        suspended_idle = false;
+        current_state = STATE_SETUP_MODE;
+        haptics_play(HAPTICS_PATTERN_SETUP_MODE);
+        (void)k_work_reschedule(&connection_timeout_work,
+                                K_MSEC(BLE_SETUP_TIMEOUT_MS));
+    }
 }
 
 
@@ -237,6 +265,56 @@ void process_event(const app_event_t *entry) {
         return;
     }
 
+    if (event == EV_BATTERY_LEVEL_1 || event == EV_BATTERY_LEVEL_2 ||
+        event == EV_BATTERY_NORMAL) {
+        battery_level = event == EV_BATTERY_LEVEL_2 ? 2 :
+                        event == EV_BATTERY_LEVEL_1 ? 1 : 0;
+        haptics_set_allowed(battery_level == 0 && !critical_idle);
+        if (current_state == STATE_AUTHENTICATED) {
+            (void)ble_send_battery_change(battery_level);
+        }
+        if (battery_level == 2) {
+            /* Keep an active flash transfer alive; close OTA on its stop or disconnect. */
+            bool updating = ota_access_is_update_active();
+            ota_access_disable();
+            if (!updating) {
+                enter_critical_idle();
+            }
+        }
+        return;
+    }
+
+    if (event == EV_BATTERY_RECHECK_DONE) {
+        if (critical_idle && suspended_idle) {
+            int level = battery_get_recheck_level();
+            if (level == 0 || level == 1) {
+                battery_level = level;
+                haptics_set_allowed(level == 0);
+                start_setup_from_idle();
+                if (!suspended_idle) {
+                    critical_idle = false;
+                } else {
+                    haptics_set_allowed(false);
+                }
+            }
+        }
+        return;
+    }
+
+    if (event == EV_OTA_UPDATE_STOPPED) {
+        if (battery_level == 2 && !ota_access_is_update_active() &&
+            !suspended_idle) {
+            ota_access_disable();
+            enter_critical_idle();
+        }
+        return;
+    }
+
+    if (event == EV_BTN_2_PULSE && suspended_idle && critical_idle) {
+        (void)battery_request_recheck();
+        return;
+    }
+
     if (suspended_idle && event != EV_BTN_2_PULSE &&
         event != EV_BTN_FACTORY_THRESHOLD &&
         event != EV_BTN_FACTORY_RESET &&
@@ -272,7 +350,9 @@ void process_event(const app_event_t *entry) {
     }
 
     if (event == EV_BLE_DISCONNECTED) {
-        if (is_in_emergency()) {
+        if (battery_level == 2 && !ota_access_is_update_active()) {
+            enter_critical_idle();
+        } else if (is_in_emergency()) {
             emergency_stop_alerts();
             current_state = is_app_id_empty() ? STATE_SETUP_MODE :
                                                 STATE_BONDED_DISCONNECTED;
@@ -373,22 +453,14 @@ void process_event(const app_event_t *entry) {
         if (current_state == STATE_AUTHENTICATED &&
             ble_is_authenticated_conn(entry->conn)) {
             if (event == EV_APP_OTA_ENABLE) {
-                (void)ota_access_enable();
+                if (battery_level >= 0 && battery_level != 2) {
+                    (void)ota_access_enable();
+                }
             } else {
                 ota_access_disable();
             }
         }
         return;
-    }
-
-    switch (event) {
-        case EV_BATTERY_LEVEL_2:
-            // TO DO
-        case EV_BATTERY_NORMAL:
-            // TO DO
-            break;
-        default:
-            break;
     }
 
     if (event == EV_BTN_EMERGENCY) {
@@ -544,14 +616,7 @@ void process_event(const app_event_t *entry) {
         case STATE_UNPAIRED:
             if (event == EV_BTN_2_PULSE) {
                 // LOG: Entering setup mode (starting ADV)
-                ret = ble_start_setup_advertising(is_app_id_empty());
-                if (ret == 0) {
-                    suspended_idle = false;
-                    current_state = STATE_SETUP_MODE;
-                    haptics_play(HAPTICS_PATTERN_SETUP_MODE);
-                    k_work_reschedule(&connection_timeout_work,
-                                      K_MSEC(BLE_SETUP_TIMEOUT_MS));
-                }
+                start_setup_from_idle();
             }
             break;
 
@@ -665,21 +730,6 @@ void process_event(const app_event_t *entry) {
                     // LOG: Failed to send COMMAND_END_ROUTINE - continuing without sending
                 }
 
-            } else if (event == EV_BATTERY_LEVEL_1) {
-                ret = ble_send_battery_change(1);
-                if (ret != 0){
-                    // LOG: Failed to send battery level 1 - continuing without sending
-                }
-            } else if (event == EV_BATTERY_LEVEL_2) {
-                ret = ble_send_battery_change(2);
-                if (ret != 0){
-                    // LOG: Failed to send battery level 2 - continuing without sending
-                }
-            } else if (event == EV_BATTERY_NORMAL) {
-                ret = ble_send_battery_change(0);
-                if (ret != 0){
-                    // LOG: Failed to send normal battery level - continuing without sending
-                }
             }
             break;
 

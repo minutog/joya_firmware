@@ -31,6 +31,8 @@ enum battery_level {
 K_MUTEX_DEFINE(battery_monitor_lock);
 static bool monitoring;
 static bool verifying;
+static bool recheck_requested;
+static enum battery_level recheck_level = BATTERY_STATE_UNKNOWN;
 static uint32_t monitor_generation;
 static uint8_t verification_count;
 static uint8_t votes[3];
@@ -188,10 +190,10 @@ static void battery_finish_verification(void)
 		return;
 	}
 
-	// Si es la primera vez y pasamos a normal -> dejamos el nivel confirmado
-	// Si no es la primera vez -> se añade el evento y dejamos confirmado
-	if ((confirmed_level == BATTERY_STATE_UNKNOWN && next == BATTERY_STATE_NORMAL) ||
-	    add_event(battery_event_for_level(next)) == 0) {
+	/* Publicar también el nivel normal inicial para habilitar OTA con una
+	 * medición confirmada. Conservar el nivel anterior si la cola está llena.
+	 */
+	if (add_event(battery_event_for_level(next)) == 0) {
 		confirmed_level = next;
 	}
 }
@@ -244,13 +246,29 @@ static void battery_monitor_work_handler(struct k_work *work)
 		if (verification_count == BATTERY_VERIFY_SAMPLES) {
 			// Evalua la votación, finaliza la verificación y programa para el monitoreo normal
 			battery_finish_verification();
+			if (recheck_requested) {
+				/* A wake decision uses only these fresh votes, never a cached level. */
+				if (votes[BATTERY_STATE_NORMAL] >= BATTERY_VERIFY_MIN_VOTES) {
+					recheck_level = BATTERY_STATE_NORMAL;
+				} else if (votes[BATTERY_STATE_NORMAL] +
+					   votes[BATTERY_STATE_LEVEL_1] >= BATTERY_VERIFY_MIN_VOTES) {
+					recheck_level = BATTERY_STATE_LEVEL_1;
+				} else if (votes[BATTERY_STATE_LEVEL_2] >= BATTERY_VERIFY_MIN_VOTES) {
+					recheck_level = BATTERY_STATE_LEVEL_2;
+				} else {
+					recheck_level = BATTERY_STATE_UNKNOWN;
+				}
+				recheck_requested = false;
+				(void)add_event(EV_BATTERY_RECHECK_DONE);
+			}
 			verifying = false;
 			(void)k_work_reschedule(&battery_monitor_work,
 						K_MSEC(BATTERY_MONITOR_INTERVAL_MS));
 		} else {
 			// Vuelve a programar para el monitoreo de verificación
 			(void)k_work_reschedule(&battery_monitor_work,
-						K_MSEC(BATTERY_VERIFY_INTERVAL_MS));
+						K_MSEC(recheck_requested ? BATTERY_RECHECK_INTERVAL_MS :
+							BATTERY_VERIFY_INTERVAL_MS));
 		}
 	} 
 	// 7. No estábamos verificando pero se detecta un cambio de nivel
@@ -305,6 +323,8 @@ int battery_monitor_stop(void)
 	monitoring = false;
 	monitor_generation++;
 	verifying = false;
+	recheck_requested = false;
+	recheck_level = BATTERY_STATE_UNKNOWN;
 	verification_count = 0;
 	(void)k_work_cancel_delayable(&battery_monitor_work);
 	k_mutex_unlock(&battery_monitor_lock);
@@ -323,4 +343,34 @@ int battery_get_last_voltage_mv(int32_t *voltage_mv)
 
 	*voltage_mv = atomic_get(&last_voltage_mv);
 	return 0;
+}
+
+int battery_request_recheck(void)
+{
+	int ret;
+
+	k_mutex_lock(&battery_monitor_lock, K_FOREVER);
+	if (!monitoring) {
+		k_mutex_unlock(&battery_monitor_lock);
+		return -EACCES;
+	}
+	monitor_generation++;
+	verifying = true;
+	recheck_requested = true;
+	recheck_level = BATTERY_STATE_UNKNOWN;
+	verification_count = 0;
+	memset(votes, 0, sizeof(votes));
+	ret = k_work_reschedule(&battery_monitor_work, K_NO_WAIT);
+	k_mutex_unlock(&battery_monitor_lock);
+	return ret < 0 ? ret : 0;
+}
+
+int battery_get_recheck_level(void)
+{
+	int level;
+
+	k_mutex_lock(&battery_monitor_lock, K_FOREVER);
+	level = recheck_level;
+	k_mutex_unlock(&battery_monitor_lock);
+	return level == BATTERY_STATE_UNKNOWN ? -ENODATA : level;
 }

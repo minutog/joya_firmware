@@ -1,5 +1,6 @@
 #include "haptics.h"
 #include <zephyr/pm/device.h>
+#include <zephyr/sys/atomic.h>
 
 #define HAPTIC_NODE DT_PATH(zephyr_user)
 
@@ -30,6 +31,7 @@ struct haptic_step {
 static uint16_t drv2605_addr;
 static bool haptics_ready;
 static bool haptic_enabled;
+static atomic_t haptics_allowed = ATOMIC_INIT(1);
 
 static enum haptics_pattern active_pattern = HAPTICS_PATTERN_NONE;
 static size_t active_step_index;
@@ -239,6 +241,10 @@ static int drv2605_idle(void)
 static int drv2605_wake(void)
 {
     int err;
+
+    if (!atomic_get(&haptics_allowed)) {
+        return -EACCES;
+    }
 
     if (haptic_enabled) {
         return 0;
@@ -552,7 +558,7 @@ int haptics_init(void)
  */
 void haptics_play_effect(enum haptics_effect effect)
 {
-	if (!haptics_ready || pattern_completion) {
+	if (!haptics_ready || !atomic_get(&haptics_allowed) || pattern_completion) {
         return;
     }
 
@@ -586,6 +592,9 @@ int haptics_play_with_completion(enum haptics_pattern pattern,
 	if (!haptics_ready) {
 		return -ENODEV;
     }
+	if (!atomic_get(&haptics_allowed)) {
+		return -EACCES;
+	}
 	if (pattern_completion && !completion) {
 		return -EBUSY;
 	}
@@ -632,6 +641,22 @@ void haptics_stop(void)
 
 	if (haptics_ready) {
 		drv2605_idle();
+	} else if (haptic_enabled) {
+		/* Initialization may have failed after enabling the GPIO. */
+		(void)gpio_pin_set_dt(&haptic_en, 0);
+		haptic_enabled = false;
+	}
+}
+
+void haptics_set_allowed(bool allowed)
+{
+	void (*completion)(void) = pattern_completion;
+	atomic_set(&haptics_allowed, allowed);
+	if (!allowed) {
+		haptics_stop();
+		if (completion) {
+			completion();
+		}
 	}
 }
 
