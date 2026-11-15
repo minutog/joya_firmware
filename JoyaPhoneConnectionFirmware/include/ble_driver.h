@@ -36,6 +36,7 @@
  */
 int ble_driver_init(void);
 bool ble_is_current_conn(struct bt_conn *conn);
+bool ble_has_connection(void);
 bool ble_is_authenticated_conn(struct bt_conn *conn);
 bool ble_mark_authenticated_conn(struct bt_conn *conn);
 

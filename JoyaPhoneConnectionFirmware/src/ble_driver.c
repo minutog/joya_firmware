@@ -365,6 +365,15 @@ bool ble_is_current_conn(struct bt_conn *conn)
     return valid;
 }
 
+bool ble_has_connection(void)
+{
+    bool connected;
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    connected = current_conn != NULL;
+    k_mutex_unlock(&conn_mutex);
+    return connected;
+}
+
 bool ble_is_authenticated_conn(struct bt_conn *conn)
 {
     bool valid;

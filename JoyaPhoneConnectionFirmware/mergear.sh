@@ -14,4 +14,4 @@ ARGUMENTO="${1:-merged.hex}"
 srec_cat \
   ./build_joya/mcuboot/zephyr/zephyr.hex -Intel \
   ./build_joya/app/zephyr/zephyr.signed.hex -Intel \
-  -o ./files/"$ARGUMENTO" -Intel
+  -o ./otros/files/"$ARGUMENTO" -Intel

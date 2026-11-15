@@ -40,6 +40,7 @@ typedef enum {
     EV_BTN_SUSPEND_REQUEST,
     EV_BTN_EMERGENCY,   
     EV_BTN_FACTORY_RESET,
+    EV_BOOT_TEST_SETUP_REQUEST,
 
     // JOYA EVENTS
     EV_APP_IDENTIFIER_RECEIVED,
@@ -52,6 +53,7 @@ typedef enum {
     EV_BLE_CONNECTED,
     EV_BLE_DISCONNECTED,
     EV_BLE_TIMEOUT,
+    EV_BLE_RESTART_ADVERTISING,
     EV_BLE_NOTIFY_ENABLED,
     EV_APP_AUTHENTICATED,
 
@@ -97,5 +99,8 @@ int add_event_for_conn(event_type_t event, struct bt_conn *conn, const uint8_t *
  * @return The current application state.
  */
 app_state_t get_current_state(void);
+
+/** Start Setup Mode from the FSM for an MCUboot Test image and report advertising status. */
+int app_start_test_setup(void);
 
 #endif // APP_STATE_H

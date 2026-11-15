@@ -1,5 +1,6 @@
 #include "app_state.h"
 #include "ota_access.h"
+#include <errno.h>
 #include <zephyr/sys/reboot.h>
 
 /** @brief Array of retry intervals for emergency events in milliseconds */
@@ -9,6 +10,10 @@ uint8_t current_retry_index = 0;
 
 static struct k_work_delayable connection_timeout_work;
 static struct k_work_delayable emergency_retry_work;
+static struct k_work_delayable advertising_restart_work;
+static uint8_t advertising_attempts;
+K_SEM_DEFINE(test_setup_sem, 0, 1);
+static int test_setup_result;
 
 /** @brief Current application state */
 static volatile app_state_t current_state = STATE_UNPAIRED;
@@ -69,6 +74,7 @@ static void emergency_stop_alerts(void)
 static void factory_reset_and_reboot(void)
 {
     reboot_pending = true;
+    (void)k_work_cancel_delayable(&advertising_restart_work);
     current_state = STATE_UNPAIRED;
     (void)ble_disconnect();
     emergency_stop_alerts();
@@ -78,6 +84,7 @@ static void factory_reset_and_reboot(void)
 
 static void enter_unpaired_idle(void)
 {
+    (void)k_work_cancel_delayable(&advertising_restart_work);
     k_work_cancel_delayable(&connection_timeout_work);
     emergency_stop_alerts();
     ota_access_disable();
@@ -132,6 +139,25 @@ static void connection_timeout_work_handler(struct k_work *work) {
     add_event(EV_BLE_TIMEOUT);
 }
 
+static void advertising_restart_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+    int err = add_event(EV_BLE_RESTART_ADVERTISING);
+    if (err != 0) {
+        return;
+    }
+}
+
+static void schedule_advertising_restart(void)
+{
+    advertising_attempts = 0;
+    /* Run after the disconnect callback and its queued conn reference are released. */
+    int ret = k_work_reschedule(&advertising_restart_work, K_MSEC(10));
+    if (ret < 0) {
+        return;
+    }
+}
+
 
 /**
  * PUBLIC API
@@ -139,6 +165,16 @@ static void connection_timeout_work_handler(struct k_work *work) {
 
 app_state_t get_current_state(void) {
     return current_state;
+}
+
+int app_start_test_setup(void)
+{
+    int err = add_event(EV_BOOT_TEST_SETUP_REQUEST);
+    if (err != 0) {
+        return err;
+    }
+    err = k_sem_take(&test_setup_sem, K_SECONDS(10));
+    return err == 0 ? test_setup_result : err;
 }
 
 
@@ -163,6 +199,7 @@ int add_event_for_conn(event_type_t event, struct bt_conn *conn, const uint8_t *
 void fsm_thread_loop(void) {
     k_work_init_delayable(&emergency_retry_work, emergency_retry_work_handler);
     k_work_init_delayable(&connection_timeout_work, connection_timeout_work_handler);
+    k_work_init_delayable(&advertising_restart_work, advertising_restart_work_handler);
 
     app_event_t entry;
     while (1) {
@@ -186,10 +223,76 @@ void process_event(const app_event_t *entry) {
         return;
     }
 
+    if (event == EV_BOOT_TEST_SETUP_REQUEST) {
+        if (current_state != STATE_UNPAIRED) {
+            test_setup_result = -EBUSY;
+        } else {
+            /* Keep Test advertising available until connection or rollback. */
+            test_setup_result = ble_start_setup_advertising(true);
+            if (test_setup_result == 0) {
+                current_state = STATE_SETUP_MODE;
+            }
+        }
+        k_sem_give(&test_setup_sem);
+        return;
+    }
+
     if (suspended_idle && event != EV_BTN_2_PULSE &&
         event != EV_BTN_FACTORY_THRESHOLD &&
         event != EV_BTN_FACTORY_RESET &&
         event != EV_HAPTICS_FACTORY_DONE) {
+        return;
+    }
+
+    if (event == EV_BLE_CONNECTED) {
+        (void)k_work_cancel_delayable(&advertising_restart_work);
+    }
+
+    if (event == EV_BLE_RESTART_ADVERTISING) {
+        if (reboot_pending || suspended_idle || advertising_attempts >= 3 ||
+            ble_has_connection() ||
+            !((current_state == STATE_BONDED_DISCONNECTED && !is_app_id_empty()) ||
+              (current_state == STATE_SETUP_MODE && is_app_id_empty()))) {
+            return;
+        }
+
+        advertising_attempts++;
+        ret = ble_start_setup_advertising(is_app_id_empty());
+        if (ret != 0) {
+            if (advertising_attempts < 3 &&
+                (ret == -ENOMEM || ret == -EBUSY || ret == -EAGAIN)) {
+                int work_ret = k_work_reschedule(&advertising_restart_work,
+                                                 K_SECONDS(5));
+                if (work_ret < 0) {
+                    return;
+                }
+            }
+        }
+        return;
+    }
+
+    if (event == EV_BLE_DISCONNECTED) {
+        if (is_in_emergency()) {
+            emergency_stop_alerts();
+            current_state = is_app_id_empty() ? STATE_SETUP_MODE :
+                                                STATE_BONDED_DISCONNECTED;
+            schedule_advertising_restart();
+        } else if (current_state == STATE_SETUP_MODE) {
+            (void)k_work_cancel_delayable(&connection_timeout_work);
+            current_state = STATE_UNPAIRED;
+            ret = ble_stop_advertising();
+            if (ret != 0) {
+                return;
+            }
+        } else if (current_state == STATE_WAITING_NOTIFICATION_ENABLE ||
+                   current_state == STATE_SETUP_WAITING_IDENTIFIER ||
+                   current_state == STATE_AUTHENTICATED) {
+            current_state = is_app_id_empty() ? STATE_UNPAIRED :
+                                                STATE_BONDED_DISCONNECTED;
+            if (current_state == STATE_BONDED_DISCONNECTED) {
+                schedule_advertising_restart();
+            }
+        }
         return;
     }
 
@@ -407,21 +510,6 @@ void process_event(const app_event_t *entry) {
 
                 return;
 
-            case EV_BLE_DISCONNECTED:
-                // LOG: BLE disconnected
-                emergency_stop_alerts();
-
-                if (is_app_id_empty()) {
-                    // LOG: No APP_ID stored - entering setup mode (starting ADV)
-                    current_state = STATE_SETUP_MODE;
-                    ble_start_setup_advertising(true);
-                } else {
-                    // LOG: APP_ID stored - entering bonded disconnected state (starting ADV)
-                    current_state = STATE_BONDED_DISCONNECTED;
-                    ble_start_setup_advertising(false);
-                }
-
-                return;
             case EV_APP_AUTHENTICATED:
                 /*
                 * Authenticated again while emergency is still active:
@@ -479,11 +567,6 @@ void process_event(const app_event_t *entry) {
                 current_state = STATE_UNPAIRED;
                 ble_stop_advertising();
 
-            } else if (event == EV_BLE_DISCONNECTED) {
-                // LOG: BLE disconnected in setup mode - returning to unpaired state
-                k_work_cancel_delayable(&connection_timeout_work);
-                current_state = STATE_UNPAIRED;
-                ble_stop_advertising();
             }
             break;
 
@@ -497,15 +580,6 @@ void process_event(const app_event_t *entry) {
             if (event == EV_BLE_NOTIFY_ENABLED) {
                 // LOG: Notifications enabled - waiting for APP_ID
                 current_state = STATE_SETUP_WAITING_IDENTIFIER;
-            } else if (event == EV_BLE_DISCONNECTED) {
-                if(is_app_id_empty()){
-                    // LOG: BLE disconnected in waiting notification enable state - returning to unpaired state
-                    current_state = STATE_UNPAIRED;
-                } else {
-                    // LOG: BLE disconnected in waiting notification enable state - returning to bonded disconnected state (starting ADV)
-                    current_state = STATE_BONDED_DISCONNECTED;
-                    ble_start_setup_advertising(false);
-                }
             }
             break;
 
@@ -563,15 +637,6 @@ void process_event(const app_event_t *entry) {
                         return;
                     }
                 }
-            } else if(event == EV_BLE_DISCONNECTED){
-                if(is_app_id_empty()){
-                    // LOG: BLE disconnected while waiting for the new APP_ID - returning to unpaired state
-                    current_state = STATE_UNPAIRED;
-                } else {
-                    // LOG: BLE disconnected while waiting for the saved APP_ID - returning to bonded disconnected state (starting ADV)
-                    current_state = STATE_BONDED_DISCONNECTED;
-                    ble_start_setup_advertising(false);
-                }
             }
             break;
 
@@ -584,11 +649,6 @@ void process_event(const app_event_t *entry) {
                 if(ret != 0){
                     // LOG: Failed to send ACK - continuing without sending
                 }
-            } else if (event == EV_BLE_DISCONNECTED) {
-                // LOG: BLE disconnected - returning to bonded disconnected state (starting ADV)
-                current_state = STATE_BONDED_DISCONNECTED;
-                ble_start_setup_advertising(false);
-
             } else if (event == EV_BTN_1_PULSE) {
                 // LOG: Routine start button pressed
                 haptics_play(HAPTICS_PATTERN_ROUTINE_START);
@@ -631,6 +691,7 @@ void process_event(const app_event_t *entry) {
                 /* Let the user retry advertising if the restart after disconnect failed. */
                 ret = ble_start_setup_advertising(false);
                 if (ret == 0) {
+                    (void)k_work_cancel_delayable(&advertising_restart_work);
                     haptics_play(HAPTICS_PATTERN_SETUP_MODE);
                 }
             } 

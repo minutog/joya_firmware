@@ -19,6 +19,7 @@ target_sources(app PRIVATE
     src/app_state.c
     src/ble_driver.c
     src/ota_access.c
+    src/test_image_guard.c
     src/button.c
     src/haptics.c
     src/flash_memory.c
