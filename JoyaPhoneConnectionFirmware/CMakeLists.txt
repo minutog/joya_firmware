@@ -26,5 +26,9 @@ target_sources(app PRIVATE
     src/battery.c
 )
 
+target_sources_ifdef(CONFIG_JOYA_HAPTICS_TEST_INDICATOR app PRIVATE
+    src/haptics_test_indicator.c
+)
+
 # Include directories for the application
 target_include_directories(app PRIVATE include)

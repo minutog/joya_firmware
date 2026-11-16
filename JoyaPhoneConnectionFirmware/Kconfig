@@ -1,0 +1,11 @@
+mainmenu "Joya firmware"
+
+source "Kconfig.zephyr"
+
+config JOYA_HAPTICS_TEST_INDICATOR
+	bool "Show allowed haptic requests on nRF52 DK LED0"
+	default n
+	depends on BOARD_NRF52DK_NRF52832 && GPIO
+	help
+	  Diagnostic only. Pulse LED0 when battery policy allows a haptic
+	  request, regardless of whether the physical DRV2605 is present.

@@ -1,4 +1,5 @@
 #include "haptics.h"
+#include "haptics_test_indicator.h"
 #include <zephyr/pm/device.h>
 #include <zephyr/sys/atomic.h>
 
@@ -558,6 +559,7 @@ int haptics_init(void)
  */
 void haptics_play_effect(enum haptics_effect effect)
 {
+	haptics_test_indicator_request(atomic_get(&haptics_allowed));
 	if (!haptics_ready || !atomic_get(&haptics_allowed) || pattern_completion) {
         return;
     }
@@ -589,6 +591,8 @@ void haptics_play_effect(enum haptics_effect effect)
 int haptics_play_with_completion(enum haptics_pattern pattern,
 				 void (*completion)(void))
 {
+	haptics_test_indicator_request(pattern != HAPTICS_PATTERN_NONE &&
+					atomic_get(&haptics_allowed));
 	if (!haptics_ready) {
 		return -ENODEV;
     }
