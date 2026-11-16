@@ -2,6 +2,7 @@
 #include "battery.h"
 #include "ota_access.h"
 #include <errno.h>
+#include <zephyr/dfu/mcuboot.h>
 #include <zephyr/sys/reboot.h>
 
 /** @brief Array of retry intervals for emergency events in milliseconds */
@@ -12,6 +13,8 @@ uint8_t current_retry_index = 0;
 static struct k_work_delayable connection_timeout_work;
 static struct k_work_delayable emergency_retry_work;
 static struct k_work_delayable advertising_restart_work;
+static struct k_work_delayable critical_window_work;
+#define CRITICAL_WINDOW_MS (5 * 60 * 1000)
 static uint8_t advertising_attempts;
 K_SEM_DEFINE(test_setup_sem, 0, 1);
 static int test_setup_result;
@@ -28,6 +31,8 @@ static bool emergency_alerts_active = false;
 static bool reboot_pending;
 static bool suspended_idle;
 static bool critical_idle;
+static bool critical_window_open;
+static int64_t critical_window_deadline_ms;
 static int battery_level = -1;
 static bool hold_blocked;
 static bool hold_released;
@@ -89,6 +94,8 @@ static void enter_unpaired_idle(void)
 {
     (void)k_work_cancel_delayable(&advertising_restart_work);
     k_work_cancel_delayable(&connection_timeout_work);
+    (void)k_work_cancel_delayable(&critical_window_work);
+    critical_window_open = false;
     emergency_stop_alerts();
     ota_access_disable();
     suspended_idle = true;
@@ -99,6 +106,8 @@ static void enter_unpaired_idle(void)
 static void enter_critical_idle(void)
 {
     critical_idle = true;
+    (void)k_work_cancel_delayable(&critical_window_work);
+    critical_window_open = false;
     if (hold_action == HOLD_SUSPEND) {
         hold_action = HOLD_NONE;
         hold_released = false;
@@ -118,6 +127,25 @@ static void start_setup_from_idle(void)
         haptics_play(HAPTICS_PATTERN_SETUP_MODE);
         (void)k_work_reschedule(&connection_timeout_work,
                                 K_MSEC(BLE_SETUP_TIMEOUT_MS));
+    }
+}
+
+static void start_critical_window(void)
+{
+    if (ble_has_connection()) {
+        return;
+    }
+    if (ble_start_setup_advertising(is_app_id_empty()) != 0) {
+        return;
+    }
+    (void)k_work_cancel_delayable(&connection_timeout_work);
+    suspended_idle = false;
+    current_state = STATE_SETUP_MODE;
+    critical_window_open = true;
+    critical_window_deadline_ms = k_uptime_get() + CRITICAL_WINDOW_MS;
+    if (k_work_reschedule(&critical_window_work,
+                          K_MSEC(CRITICAL_WINDOW_MS)) < 0) {
+        enter_critical_idle();
     }
 }
 
@@ -176,6 +204,14 @@ static void advertising_restart_work_handler(struct k_work *work)
     }
 }
 
+static void critical_window_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+    if (add_event(EV_CRITICAL_WINDOW_TIMEOUT) != 0) {
+        (void)k_work_reschedule(&critical_window_work, K_SECONDS(1));
+    }
+}
+
 static void schedule_advertising_restart(void)
 {
     advertising_attempts = 0;
@@ -228,6 +264,7 @@ void fsm_thread_loop(void) {
     k_work_init_delayable(&emergency_retry_work, emergency_retry_work_handler);
     k_work_init_delayable(&connection_timeout_work, connection_timeout_work_handler);
     k_work_init_delayable(&advertising_restart_work, advertising_restart_work_handler);
+    k_work_init_delayable(&critical_window_work, critical_window_work_handler);
 
     app_event_t entry;
     while (1) {
@@ -259,6 +296,15 @@ void process_event(const app_event_t *entry) {
             test_setup_result = ble_start_setup_advertising(true);
             if (test_setup_result == 0) {
                 current_state = STATE_SETUP_MODE;
+                /* A Test image needs time to accept CONFIRM even when the
+                 * ADC subsequently reports level 2 or never gives a level.
+                 */
+                critical_window_open = true;
+                critical_window_deadline_ms = k_uptime_get() + CRITICAL_WINDOW_MS;
+                if (k_work_reschedule(&critical_window_work,
+                                      K_MSEC(CRITICAL_WINDOW_MS)) < 0) {
+                    test_setup_result = -EIO;
+                }
             }
         }
         k_sem_give(&test_setup_sem);
@@ -269,6 +315,23 @@ void process_event(const app_event_t *entry) {
         event == EV_BATTERY_NORMAL) {
         battery_level = event == EV_BATTERY_LEVEL_2 ? 2 :
                         event == EV_BATTERY_LEVEL_1 ? 1 : 0;
+        if (battery_level != 2) {
+            if (critical_window_open) {
+                (void)k_work_cancel_delayable(&critical_window_work);
+                critical_window_open = false;
+                if (current_state == STATE_SETUP_MODE &&
+                    !ble_has_connection() && boot_is_img_confirmed()) {
+                    (void)k_work_reschedule(&connection_timeout_work,
+                                            K_MSEC(BLE_SETUP_TIMEOUT_MS));
+                }
+            }
+            if (!suspended_idle) {
+                critical_idle = false;
+            }
+        }
+        if (battery_level == 2 && critical_window_open) {
+            critical_idle = true;
+        }
         haptics_set_allowed(battery_level == 0 && !critical_idle);
         if (current_state == STATE_AUTHENTICATED) {
             (void)ble_send_battery_change(battery_level);
@@ -276,8 +339,10 @@ void process_event(const app_event_t *entry) {
         if (battery_level == 2) {
             /* Keep an active flash transfer alive; close OTA on its stop or disconnect. */
             bool updating = ota_access_is_update_active();
-            ota_access_disable();
-            if (!updating) {
+            if (!critical_window_open) {
+                ota_access_disable();
+            }
+            if (!updating && !critical_window_open) {
                 enter_critical_idle();
             }
         }
@@ -285,24 +350,24 @@ void process_event(const app_event_t *entry) {
     }
 
     if (event == EV_BATTERY_RECHECK_DONE) {
-        if (critical_idle && suspended_idle) {
-            int level = battery_get_recheck_level();
-            if (level == 0 || level == 1) {
-                battery_level = level;
-                haptics_set_allowed(level == 0);
-                start_setup_from_idle();
-                if (!suspended_idle) {
-                    critical_idle = false;
-                } else {
-                    haptics_set_allowed(false);
-                }
-            }
+        return;
+    }
+
+    if (event == EV_CRITICAL_WINDOW_TIMEOUT) {
+        if (!critical_window_open ||
+            k_uptime_get() < critical_window_deadline_ms) {
+            return;
+        }
+        critical_window_open = false;
+        if (battery_level == 2 && !ota_access_is_update_active()) {
+            enter_critical_idle();
         }
         return;
     }
 
     if (event == EV_OTA_UPDATE_STOPPED) {
-        if (battery_level == 2 && !ota_access_is_update_active() &&
+        if (battery_level == 2 && !critical_window_open &&
+            !ota_access_is_update_active() &&
             !suspended_idle) {
             ota_access_disable();
             enter_critical_idle();
@@ -310,8 +375,49 @@ void process_event(const app_event_t *entry) {
         return;
     }
 
+    if (event == EV_BTN_2_PULSE && ble_has_connection()) {
+        return;
+    }
+
+    if (event == EV_BTN_2_PULSE && !suspended_idle &&
+        battery_level == 2 && !critical_window_open) {
+        enter_critical_idle();
+        start_critical_window();
+        return;
+    }
+
     if (event == EV_BTN_2_PULSE && suspended_idle && critical_idle) {
-        (void)battery_request_recheck();
+        if (battery_level == 0 || battery_level == 1) {
+            start_setup_from_idle();
+            if (!suspended_idle) {
+                critical_idle = false;
+                haptics_set_allowed(battery_level == 0);
+            }
+        } else {
+            start_critical_window();
+        }
+        return;
+    }
+
+    if (event == EV_BTN_2_PULSE && !suspended_idle &&
+        (current_state == STATE_WAITING_NOTIFICATION_ENABLE ||
+         current_state == STATE_SETUP_WAITING_IDENTIFIER ||
+         current_state == STATE_SETUP_WAITING_NEW_IDENTIFIER ||
+         current_state == STATE_AUTHENTICATED ||
+         current_state == STATE_EMERGENCY)) {
+        emergency_stop_alerts();
+        /* The BLE disconnect callback already cleared its connection,
+         * authentication and SMP context; only the queued FSM event was lost.
+         */
+        current_state = is_app_id_empty() ? STATE_UNPAIRED :
+                                            STATE_BONDED_DISCONNECTED;
+    }
+
+    if (event == EV_BTN_2_PULSE && critical_window_open && !suspended_idle) {
+        if (ble_start_setup_advertising(is_app_id_empty()) == 0) {
+            current_state = is_app_id_empty() ? STATE_SETUP_MODE :
+                                                STATE_BONDED_DISCONNECTED;
+        }
         return;
     }
 
@@ -350,7 +456,11 @@ void process_event(const app_event_t *entry) {
     }
 
     if (event == EV_BLE_DISCONNECTED) {
-        if (battery_level == 2 && !ota_access_is_update_active()) {
+        if (critical_window_open) {
+            current_state = is_app_id_empty() ? STATE_SETUP_MODE :
+                                                STATE_BONDED_DISCONNECTED;
+            schedule_advertising_restart();
+        } else if (battery_level == 2 && !ota_access_is_update_active()) {
             enter_critical_idle();
         } else if (is_in_emergency()) {
             emergency_stop_alerts();
@@ -453,9 +563,7 @@ void process_event(const app_event_t *entry) {
         if (current_state == STATE_AUTHENTICATED &&
             ble_is_authenticated_conn(entry->conn)) {
             if (event == EV_APP_OTA_ENABLE) {
-                if (battery_level >= 0 && battery_level != 2) {
-                    (void)ota_access_enable();
-                }
+                (void)ota_access_enable();
             } else {
                 ota_access_disable();
             }
@@ -569,6 +677,9 @@ void process_event(const app_event_t *entry) {
                 return;
 
             case EV_BLE_TIMEOUT:
+                if (critical_window_open) {
+                    return;
+                }
                 // LOG: BLE timeout
                 if (is_app_id_empty()) {
                     // LOG: No APP_ID stored - entering setup mode (starting ADV)
@@ -627,7 +738,7 @@ void process_event(const app_event_t *entry) {
                 current_state = STATE_WAITING_NOTIFICATION_ENABLE;
                 ble_stop_advertising();
 
-            } else if (event == EV_BLE_TIMEOUT) {
+            } else if (event == EV_BLE_TIMEOUT && !critical_window_open) {
                 // LOG: BLE setup timeout in setup mode - returning to unpaired state
                 current_state = STATE_UNPAIRED;
                 ble_stop_advertising();

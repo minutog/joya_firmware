@@ -1,6 +1,7 @@
 #include "battery.h"
 #include "app_state.h"
 #include "ble_driver.h"
+#include "haptics.h"
 
 #include <errno.h>
 #include <string.h>
@@ -44,6 +45,7 @@ K_WORK_DELAYABLE_DEFINE(battery_monitor_work, battery_monitor_work_handler);
 int battery_init(void)
 {
 	int err;
+	int32_t voltage_mv;
 
 	if (atomic_get(&initialized)) {
 		return 0;
@@ -59,6 +61,13 @@ int battery_init(void)
 	}
 
 	atomic_set(&initialized, 1);
+	/* A single fresh reading may enable haptics, but never confirms a battery
+	 * level or changes the FSM. The six-sample monitor still owns those events.
+	 */
+	if (battery_get_voltage_mv(&voltage_mv) == 0 &&
+	    voltage_mv > BATTERY_LEVEL_1_MV) {
+		haptics_set_allowed(true);
+	}
 	return 0;
 }
 

@@ -32,7 +32,7 @@ struct haptic_step {
 static uint16_t drv2605_addr;
 static bool haptics_ready;
 static bool haptic_enabled;
-static atomic_t haptics_allowed = ATOMIC_INIT(1);
+static atomic_t haptics_allowed = ATOMIC_INIT(0);
 
 static enum haptics_pattern active_pattern = HAPTICS_PATTERN_NONE;
 static size_t active_step_index;

@@ -9,10 +9,8 @@
 #define BATTERY_VERIFY_MIN_VOTES    5
 #define BATTERY_RECHECK_INTERVAL_MS 1000
 
-#define BATTERY_LEVEL_1_MV              3000
-#define BATTERY_LEVEL_2_MV             2900
-//#define BATTERY_LEVEL_1_MV          3500
-//#define BATTERY_LEVEL_2_MV          3400
+#define BATTERY_LEVEL_1_MV             3500
+#define BATTERY_LEVEL_2_MV             3400
 
 /* Para recuperarse, cada umbral exige superar su valor por este margen. */
 #define BATTERY_HYSTERESIS_MV       50

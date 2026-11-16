@@ -40,9 +40,13 @@ ssize_t on_rx_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *att
         ev = EV_APP_FRIEND_EMERGENCY;
         add_event(ev);
     } else if (val == COMMAND_OTA_ENABLE) {
-        add_event_for_conn(EV_APP_OTA_ENABLE, conn, NULL);
+        if (add_event_for_conn(EV_APP_OTA_ENABLE, conn, NULL) != 0) {
+            return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
+        }
     } else if (val == COMMAND_OTA_DISABLE) {
-        add_event_for_conn(EV_APP_OTA_DISABLE, conn, NULL);
+        if (add_event_for_conn(EV_APP_OTA_DISABLE, conn, NULL) != 0) {
+            return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
+        }
     } else {
         // (improvement): handle unknown command if needed
     }
@@ -60,7 +64,9 @@ ssize_t on_rx_auth_write_handler(struct bt_conn *conn, const struct bt_gatt_attr
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
     }
 
-    add_event_for_conn(EV_APP_IDENTIFIER_RECEIVED, conn, buf);
+    if (add_event_for_conn(EV_APP_IDENTIFIER_RECEIVED, conn, buf) != 0) {
+        return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
+    }
     
     return len;
 }
