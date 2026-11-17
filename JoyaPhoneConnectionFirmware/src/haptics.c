@@ -225,10 +225,16 @@ static int haptics_i2c_resume(void)
  */
 static int drv2605_idle(void)
 {
+	int err = 0;
+	int result;
+
 	if (haptic_enabled) {
-		(void)drv2605_write_reg(DRV2605_REG_RTP_INPUT, HAPTIC_RTP_OFF);
-		(void)drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_STANDBY);
-		(void)gpio_pin_set_dt(&haptic_en, 0);
+		result = drv2605_write_reg(DRV2605_REG_RTP_INPUT, HAPTIC_RTP_OFF);
+		if (result < 0) err = result;
+		result = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_STANDBY);
+		if (result < 0 && err == 0) err = result;
+		result = gpio_pin_set_dt(&haptic_en, 0);
+		if (result < 0 && err == 0) err = result;
 		haptic_enabled = false;
 	}
 
@@ -236,7 +242,8 @@ static int drv2605_idle(void)
 	active_pattern = HAPTICS_PATTERN_NONE;
 	active_step_index = 0;
 
-	return haptics_i2c_suspend();
+	result = haptics_i2c_suspend();
+	return err < 0 ? err : result;
 }
 
 static int drv2605_wake(void)
@@ -471,6 +478,7 @@ int haptics_init(void)
 {
 	int err;
 	uint8_t status = 0;
+	uint8_t reg;
 
 	if (haptics_ready) {
 		return 0;
@@ -494,7 +502,7 @@ int haptics_init(void)
 
 	err = i2c_recover_bus(haptic_i2c);
 	if (err < 0 && err != -ENOSYS) {
-		// (improvement): decide what to do if I2C bus recovery fails (e.g., retry, log error, etc.)
+		goto fail;
 	}
 
 	drv2605_addr = DRV2605_I2C_ADDR_LOW;
@@ -506,51 +514,61 @@ int haptics_init(void)
 	}
 
 	if (err < 0) {
-		(void)gpio_pin_set_dt(&haptic_en, 0);
-		haptic_enabled = false;
-		return -ENODEV;
+		err = -ENODEV;
+		goto fail;
 	}
 
-	(void)drv2605_read_reg(DRV2605_REG_STATUS, &status);
+	err = drv2605_read_reg(DRV2605_REG_STATUS, &status);
+	if (err < 0) {
+		goto fail;
+	}
 
 	err = drv2605_write_reg(DRV2605_REG_MODE, DRV2605_MODE_INTERNAL_TRIGGER);
 	if (err < 0) {
-		(void)gpio_pin_set_dt(&haptic_en, 0);
-		haptic_enabled = false;
-		return err;
+		goto fail;
 	}
-
-	uint8_t reg;
 
 	/* Select ERM actuator */
 	err = drv2605_read_reg(DRV2605_REG_FEEDBACK_CONTROL, &reg);
 	if (err < 0) {
-		return err;
+		goto fail;
 	}
 
 	reg &= ~DRV2605_N_ERM_LRA;
 
 	err = drv2605_write_reg(DRV2605_REG_FEEDBACK_CONTROL, reg);
 	if (err < 0) {
-		return err;
+		goto fail;
 	}
 
-	/* Configure ERM open-loop with signed RTP */
+	/* Select ERM open-loop and signed RTP, preserving other CONTROL3 bits. */
 	err = drv2605_read_reg(DRV2605_REG_CONTROL3, &reg);
 	if (err < 0) {
-		return err;
+		goto fail;
+	}
+	reg = (reg | DRV2605_ERM_OPEN_LOOP) & ~DRV2605_DATA_FORMAT_RTP;
+	err = drv2605_write_reg(DRV2605_REG_CONTROL3, reg);
+	if (err < 0) {
+		goto fail;
 	}
 
 	err = drv2605_write_reg(DRV2605_REG_OD_CLAMP,
                         DRV2605_OD_CLAMP_2V5);
 	if (err < 0) {
-		return err;
+		goto fail;
 	}
 
+	err = drv2605_idle();
+	if (err < 0) {
+		return err;
+	}
 	haptics_ready = true;
-	return drv2605_idle();
+	return 0;
 
-	// return 0;
+fail:
+	(void)gpio_pin_set_dt(&haptic_en, 0);
+	haptic_enabled = false;
+	return err;
 }
 
 /**

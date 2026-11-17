@@ -63,9 +63,13 @@ static void on_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value) {
 static void on_battery_change_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
     ARG_UNUSED(attr);
+    bool enabled = (value == BT_GATT_CCC_NOTIFY);
     k_mutex_lock(&conn_mutex, K_FOREVER);
-    battery_change_notify_enabled = (value == BT_GATT_CCC_NOTIFY);
+    battery_change_notify_enabled = enabled;
     k_mutex_unlock(&conn_mutex);
+    if (enabled) {
+        (void)add_event(EV_BLE_BATTERY_NOTIFY_ENABLED);
+    }
 }
 
 static void on_battery_measurement_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)

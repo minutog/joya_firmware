@@ -34,6 +34,14 @@ static bool critical_idle;
 static bool critical_window_open;
 static int64_t critical_window_deadline_ms;
 static int battery_level = -1;
+
+static void notify_current_battery_level(void)
+{
+    if (battery_level >= 0 && current_state == STATE_AUTHENTICATED) {
+        (void)ble_send_battery_change((uint8_t)battery_level);
+    }
+}
+
 static bool hold_blocked;
 static bool hold_released;
 static bool hold_pattern_done;
@@ -333,9 +341,7 @@ void process_event(const app_event_t *entry) {
             critical_idle = true;
         }
         haptics_set_allowed(battery_level == 0 && !critical_idle);
-        if (current_state == STATE_AUTHENTICATED) {
-            (void)ble_send_battery_change(battery_level);
-        }
+        notify_current_battery_level();
         if (battery_level == 2) {
             /* Keep an active flash transfer alive; close OTA on its stop or disconnect. */
             bool updating = ota_access_is_update_active();
@@ -350,6 +356,11 @@ void process_event(const app_event_t *entry) {
     }
 
     if (event == EV_BATTERY_RECHECK_DONE) {
+        return;
+    }
+
+    if (event == EV_BLE_BATTERY_NOTIFY_ENABLED) {
+        notify_current_battery_level();
         return;
     }
 
@@ -781,6 +792,7 @@ void process_event(const app_event_t *entry) {
                     if(ret != 0){
                         // LOG: Failed to send ACK - continuing without sending
                     }
+                    notify_current_battery_level();
 
                     haptics_play(HAPTICS_PATTERN_ACK_CONNECTION);
                     add_event(EV_APP_AUTHENTICATED);
@@ -800,6 +812,7 @@ void process_event(const app_event_t *entry) {
                         if(ret != 0){
                             // LOG: Failed to send ACK - continuing without sending
                         }
+                        notify_current_battery_level();
                         add_event(EV_APP_AUTHENTICATED);
                         haptics_play(HAPTICS_PATTERN_ACK_CONNECTION);
                         return;

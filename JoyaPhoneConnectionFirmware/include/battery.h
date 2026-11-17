@@ -3,17 +3,17 @@
 
 #include <stdint.h>
 
-#define BATTERY_MONITOR_INTERVAL_MS 60000
-#define BATTERY_VERIFY_INTERVAL_MS  10000
-#define BATTERY_VERIFY_SAMPLES      6
-#define BATTERY_VERIFY_MIN_VOTES    5
-#define BATTERY_RECHECK_INTERVAL_MS 1000
+#define BATTERY_MONITOR_INTERVAL_MS     60000
+#define BATTERY_VERIFY_INTERVAL_MS      10000
+#define BATTERY_VERIFY_SAMPLES          6
+#define BATTERY_VERIFY_MIN_VOTES        5
+#define BATTERY_RECHECK_INTERVAL_MS     1000
 
-#define BATTERY_LEVEL_1_MV             3500
-#define BATTERY_LEVEL_2_MV             3400
+#define BATTERY_LEVEL_1_MV              3500
+#define BATTERY_LEVEL_2_MV              3400
 
 /* Para recuperarse, cada umbral exige superar su valor por este margen. */
-#define BATTERY_HYSTERESIS_MV       50
+#define BATTERY_HYSTERESIS_MV           50
 
 /* Inicializar el canal SAADC antes de leer o iniciar el monitoreo. */
 int battery_init(void);
