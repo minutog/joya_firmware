@@ -23,6 +23,8 @@ target_sources(app PRIVATE
     src/button.c
     src/haptics.c
     src/flash_memory.c
+    src/emergency_phase.c
+    src/diagnostics.c
     src/battery.c
 )
 

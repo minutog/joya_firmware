@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <string.h>
 #include "app_comm.h"
+#include "emergency_phase.h"
 
 #include <zephyr/settings/settings.h>
 
@@ -36,12 +37,9 @@ int storage_save_app_id(const uint8_t* new_app_id);
  */
 int storage_factory_reset(void);
 
-/**
- * @brief Save the emergency state to storage.
- * @param is_active true if emergency mode is active, false otherwise.
- * @return 0 on success, or a non-zero value on failure.
- */
-int storage_save_emergency_state(bool is_active);
+/** Update the emergency phase in RAM and persist it when flash is available. */
+int storage_save_emergency_phase(emergency_phase_t phase);
+emergency_phase_t storage_get_emergency_phase(void);
 
 /**
  * @brief Check whether emergency mode is active.

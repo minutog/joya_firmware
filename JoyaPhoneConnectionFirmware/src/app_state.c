@@ -1,6 +1,7 @@
 #include "app_state.h"
 #include "battery.h"
 #include "ota_access.h"
+#include "diagnostics.h"
 #include <errno.h>
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/sys/reboot.h>
@@ -28,6 +29,7 @@ K_MSGQ_DEFINE(event_queue, sizeof(app_event_t), 20, 4);
 K_THREAD_DEFINE(fsm_thread_id, 4098, fsm_thread_loop, NULL, NULL, NULL, 5, 0, 0);
 
 static bool emergency_alerts_active = false;
+static void sync_ibeacon_mode(void);
 static bool reboot_pending;
 static bool suspended_idle;
 static bool critical_idle;
@@ -95,6 +97,7 @@ static void factory_reset_and_reboot(void)
     (void)ble_disconnect();
     emergency_stop_alerts();
     (void)storage_factory_reset();
+    sync_ibeacon_mode();
     sys_reboot(SYS_REBOOT_COLD);
 }
 
@@ -126,9 +129,25 @@ static void enter_critical_idle(void)
     }
 }
 
+static void sync_ibeacon_mode(void)
+{
+    ble_ibeacon_mode_t mode = ibeacon_mode_for_state(
+        !is_app_id_empty(), storage_get_emergency_phase());
+    (void)ble_set_ibeacon_mode(mode);
+}
+
+static int start_advertising_with_ibeacon(bool is_new_connection)
+{
+    int err = ble_start_setup_advertising(is_new_connection);
+    if (err == 0) {
+        sync_ibeacon_mode();
+    }
+    return err;
+}
+
 static void start_setup_from_idle(void)
 {
-    int ret = ble_start_setup_advertising(is_app_id_empty());
+    int ret = start_advertising_with_ibeacon(is_app_id_empty());
     if (ret == 0) {
         suspended_idle = false;
         current_state = STATE_SETUP_MODE;
@@ -143,7 +162,7 @@ static void start_critical_window(void)
     if (ble_has_connection()) {
         return;
     }
-    if (ble_start_setup_advertising(is_app_id_empty()) != 0) {
+    if (start_advertising_with_ibeacon(is_app_id_empty()) != 0) {
         return;
     }
     (void)k_work_cancel_delayable(&connection_timeout_work);
@@ -174,6 +193,10 @@ static void emergency_schedule_next_retry(void)
 
 static void emergency_restart_alerts(void)
 {
+    if (!emergency_phase_needs_notification(storage_get_emergency_phase())) {
+        emergency_stop_alerts();
+        return;
+    }
     emergency_alerts_active = true;
 
     k_work_cancel_delayable(&emergency_retry_work);
@@ -262,6 +285,9 @@ int add_event_for_conn(event_type_t event, struct bt_conn *conn, const uint8_t *
         memcpy(entry.app_id, app_id, SIZE_APP_ID);
     }
     int err = k_msgq_put(&event_queue, &entry, K_NO_WAIT);
+    if (err) {
+        diagnostics_report_error(DIAG_ERROR_EVENT_QUEUE_FULL);
+    }
     if (err && entry.conn) {
         bt_conn_unref(entry.conn);
     }
@@ -301,7 +327,7 @@ void process_event(const app_event_t *entry) {
             test_setup_result = -EBUSY;
         } else {
             /* Keep Test advertising available until connection or rollback. */
-            test_setup_result = ble_start_setup_advertising(true);
+            test_setup_result = start_advertising_with_ibeacon(true);
             if (test_setup_result == 0) {
                 current_state = STATE_SETUP_MODE;
                 /* A Test image needs time to accept CONFIRM even when the
@@ -425,7 +451,7 @@ void process_event(const app_event_t *entry) {
     }
 
     if (event == EV_BTN_2_PULSE && critical_window_open && !suspended_idle) {
-        if (ble_start_setup_advertising(is_app_id_empty()) == 0) {
+        if (start_advertising_with_ibeacon(is_app_id_empty()) == 0) {
             current_state = is_app_id_empty() ? STATE_SETUP_MODE :
                                                 STATE_BONDED_DISCONNECTED;
         }
@@ -441,6 +467,7 @@ void process_event(const app_event_t *entry) {
 
     if (event == EV_BLE_CONNECTED) {
         (void)k_work_cancel_delayable(&advertising_restart_work);
+        (void)ble_set_ibeacon_mode(BLE_IBEACON_OFF);
     }
 
     if (event == EV_BLE_RESTART_ADVERTISING) {
@@ -452,7 +479,7 @@ void process_event(const app_event_t *entry) {
         }
 
         advertising_attempts++;
-        ret = ble_start_setup_advertising(is_app_id_empty());
+        ret = start_advertising_with_ibeacon(is_app_id_empty());
         if (ret != 0) {
             if (advertising_attempts < 3 &&
                 (ret == -ENOMEM || ret == -EBUSY || ret == -EAGAIN)) {
@@ -584,10 +611,13 @@ void process_event(const app_event_t *entry) {
 
     if (event == EV_BTN_EMERGENCY) {
         // LOG: Emergency button pressed
-        ret = storage_save_emergency_state(true);
+        ret = storage_save_emergency_phase(
+            emergency_phase_transition(storage_get_emergency_phase(),
+                                       EMERGENCY_TRIGGER));
         if (ret == 1) {
             // LOG: Failed to save emergency state in flash - continuing without saving
         }
+        sync_ibeacon_mode();
 
         haptics_play(HAPTICS_PATTERN_EMERGENCY_START);
         // Note: haptics effect will be played even if the secure channel is not ready, as a warning to the user.
@@ -603,13 +633,13 @@ void process_event(const app_event_t *entry) {
         reset_emergency_retry_index();
 
         if (current_state == STATE_BONDED_DISCONNECTED) {
-            ble_start_setup_advertising(false);
+            start_advertising_with_ibeacon(false);
         } else if (current_state == STATE_UNPAIRED && !is_app_id_empty()) {
             current_state = STATE_BONDED_DISCONNECTED;
-            ble_start_setup_advertising(false);
+            start_advertising_with_ibeacon(false);
         } else if (current_state == STATE_UNPAIRED && is_app_id_empty()) {
             current_state = STATE_SETUP_MODE;
-            ble_start_setup_advertising(true);
+            start_advertising_with_ibeacon(true);
         }
 
         return;
@@ -623,7 +653,7 @@ void process_event(const app_event_t *entry) {
     if (is_in_emergency()) {
         switch (event) {
             case EV_EMERGENCY_RETRY:
-                if (!is_in_emergency()) {
+                if (!emergency_phase_needs_notification(storage_get_emergency_phase())) {
                     return;
                 }
 
@@ -664,6 +694,13 @@ void process_event(const app_event_t *entry) {
                 }
                 // LOG: Acknowledged emergency event received
                 emergency_stop_alerts();
+                ret = storage_save_emergency_phase(
+                    emergency_phase_transition(storage_get_emergency_phase(),
+                                               EMERGENCY_ACK));
+                if (ret == 1) {
+                    // LOG: Failed to persist ACK - continuing with RAM state
+                }
+                sync_ibeacon_mode();
                 ret = ble_send_event_secure(COMMAND_ACK);
                 if(ret != 0){
                     // LOG: Failed to send ACK - continuing without sending
@@ -677,10 +714,13 @@ void process_event(const app_event_t *entry) {
                 }
                 // LOG: Stop emergency event received
                 emergency_stop_alerts();
-                ret = storage_save_emergency_state(false);
+                ret = storage_save_emergency_phase(
+                    emergency_phase_transition(storage_get_emergency_phase(),
+                                               EMERGENCY_STOP));
                 if (ret == 1) {
                     // LOG: Failed to save emergency state in flash - continuing without saving
                 }
+                sync_ibeacon_mode();
                 ret = ble_send_event_secure(COMMAND_ACK);
                 if(ret != 0){
                     // LOG: Failed to send ACK - continuing without sending
@@ -695,24 +735,25 @@ void process_event(const app_event_t *entry) {
                 if (is_app_id_empty()) {
                     // LOG: No APP_ID stored - entering setup mode (starting ADV)
                     current_state = STATE_SETUP_MODE;
-                    ble_start_setup_advertising(true);
+                    start_advertising_with_ibeacon(true);
                 } else {
                     // LOG: APP_ID stored - entering bonded disconnected state (starting ADV)
                     current_state = STATE_BONDED_DISCONNECTED;
-                    ble_start_setup_advertising(false);
+                    start_advertising_with_ibeacon(false);
                 }
 
                 return;
 
             case EV_APP_AUTHENTICATED:
                 /*
-                * Authenticated again while emergency is still active:
-                * restart the alert timing table and send immediately.
+                * An unacknowledged emergency resumes alerts on authentication.
                 */
-                // LOG: App authenticated - restarting alerts
+                // LOG: App authenticated during emergency
                 current_state = STATE_AUTHENTICATED;
-                emergency_restart_alerts();
-                haptics_play(HAPTICS_PATTERN_EMERGENCY_START);
+                if (emergency_phase_needs_notification(storage_get_emergency_phase())) {
+                    emergency_restart_alerts();
+                    haptics_play(HAPTICS_PATTERN_EMERGENCY_START);
+                }
 
                 return;
 
@@ -783,6 +824,7 @@ void process_event(const app_event_t *entry) {
                     if(ret == 1) {
                         // LOG: Flash write failed while saving new APP_ID - continuing with RAM state
                     }
+                    sync_ibeacon_mode();
                     
                     // LOG: New APP_ID saved - sending ACK
                     current_state = STATE_AUTHENTICATED;
@@ -863,7 +905,7 @@ void process_event(const app_event_t *entry) {
                 current_state = STATE_WAITING_NOTIFICATION_ENABLE;
             } else if (event == EV_BTN_2_PULSE) {
                 /* Let the user retry advertising if the restart after disconnect failed. */
-                ret = ble_start_setup_advertising(false);
+                ret = start_advertising_with_ibeacon(false);
                 if (ret == 0) {
                     (void)k_work_cancel_delayable(&advertising_restart_work);
                     haptics_play(HAPTICS_PATTERN_SETUP_MODE);

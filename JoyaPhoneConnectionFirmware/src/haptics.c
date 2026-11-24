@@ -1,5 +1,6 @@
 #include "haptics.h"
 #include "haptics_test_indicator.h"
+#include "diagnostics.h"
 #include <zephyr/pm/device.h>
 #include <zephyr/sys/atomic.h>
 
@@ -137,8 +138,11 @@ static int drv2605_write_reg(uint8_t reg, uint8_t value)
 {
 	// Create a buffer containing the register address followed by the value to write
 	uint8_t data[2] = { reg, value };
-
-	return i2c_write(haptic_i2c, data, sizeof(data), drv2605_addr);
+	int err = i2c_write(haptic_i2c, data, sizeof(data), drv2605_addr);
+	if (err < 0) {
+		diagnostics_report_error(DIAG_ERROR_I2C);
+	}
+	return err;
 }
 
 /**
@@ -149,7 +153,11 @@ static int drv2605_write_reg(uint8_t reg, uint8_t value)
  */
 static int drv2605_read_reg(uint8_t reg, uint8_t *value)
 {
-	return i2c_reg_read_byte(haptic_i2c, drv2605_addr, reg, value);
+	int err = i2c_reg_read_byte(haptic_i2c, drv2605_addr, reg, value);
+	if (err < 0) {
+		diagnostics_report_error(DIAG_ERROR_I2C);
+	}
+	return err;
 }
 
 /**

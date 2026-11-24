@@ -5,12 +5,14 @@
 #include "app_state.h"
 #include "battery.h"
 #include "test_image_guard.h"
+#include "diagnostics.h"
 
 int main(void) {
     bool ota_test_boot = !boot_is_img_confirmed();
 
     int ret ;
     ret = storage_init();
+    diagnostics_record_init(DIAG_INIT_SETTINGS, ret);
     if (ret != 0) {
         // Storage initialization failed - continuing with RAM defaults
     }
@@ -19,10 +21,12 @@ int main(void) {
         /* A Test image must prove the recovery button and BLE setup path work. */
         test_image_guard_init();
         ret = button_init();
+        diagnostics_record_init(DIAG_INIT_BUTTON, ret);
         if (ret != 0) {
             sys_reboot(SYS_REBOOT_COLD);
         }
         ret = ble_driver_init();
+        diagnostics_record_init(DIAG_INIT_BLE, ret);
         if (ret != 0) {
             sys_reboot(SYS_REBOOT_COLD);
         }
@@ -33,11 +37,13 @@ int main(void) {
         test_image_guard_start();
     } else {
         ret = ble_driver_init();
+        diagnostics_record_init(DIAG_INIT_BLE, ret);
         if (ret != 0) {
             // BLE driver initialization failed
             return -1;
         }
         ret = button_init();
+        diagnostics_record_init(DIAG_INIT_BUTTON, ret);
         if (ret != 0) {
             // Button initialization failed
             return -1;
@@ -46,6 +52,7 @@ int main(void) {
 
 
     ret = haptics_init();
+    diagnostics_record_init(DIAG_INIT_HAPTIC, ret);
     if (ret < 0) {
         // LOG: Haptics initialization failed - continuing without haptics
         // (improvement): decide what to do if haptics initialization fails (e.g., retry, log error, etc.)
@@ -63,6 +70,8 @@ int main(void) {
     if (ret == 0) {
         ret = battery_monitor_start();
     }
+    diagnostics_record_init(DIAG_INIT_BATTERY, ret);
+    diagnostics_finish_init();
     
     // LOG: Initialization complete
 

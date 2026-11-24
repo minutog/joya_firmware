@@ -1,7 +1,8 @@
 #include "flash_memory.h"
+#include "diagnostics.h"
 
 uint8_t joya_app_id[SIZE_APP_ID] = {0};
-static bool joya_is_in_emergency = false;
+static emergency_phase_t joya_emergency_phase = EMERGENCY_NONE;
 
 static bool storage_persistent_available = false;
 
@@ -55,10 +56,11 @@ static int app_settings_set(const char *name, size_t len, settings_read_cb read_
 
     // Evaluate EMERGENCY
     if (settings_name_steq(name, "emergency", &next) && !next) {
-        if (len != sizeof(joya_is_in_emergency)) {
+        if (len != sizeof(uint8_t)) {
             return -EINVAL;
         }
-        rc = read_cb(cb_arg, &joya_is_in_emergency, len);
+        uint8_t stored;
+        rc = read_cb(cb_arg, &stored, len);
         if (rc < 0) {
             return rc;
         }
@@ -67,7 +69,7 @@ static int app_settings_set(const char *name, size_t len, settings_read_cb read_
             return -EINVAL;
         }
 
-        return 0;
+        return emergency_phase_decode(stored, &joya_emergency_phase) ? 0 : -EINVAL;
     }
 
     // Evaluate DEVICE NAME
@@ -106,7 +108,11 @@ static int app_settings_set(const char *name, size_t len, settings_read_cb read_
  * 
  */
 bool is_in_emergency(void) {
-    return joya_is_in_emergency;
+    return joya_emergency_phase != EMERGENCY_NONE;
+}
+
+emergency_phase_t storage_get_emergency_phase(void) {
+    return joya_emergency_phase;
 }
 
 /**
@@ -129,7 +135,7 @@ int storage_init(void)
     storage_persistent_available = false;
 
     memset(joya_app_id, 0, SIZE_APP_ID);
-    joya_is_in_emergency = false;
+    joya_emergency_phase = EMERGENCY_NONE;
     strcpy(joya_name, JOYA_ADV_NAME_DEFAULT);
 
     int err = settings_subsys_init();
@@ -142,12 +148,13 @@ int storage_init(void)
 
     err = settings_load();
     if (err) {
+        diagnostics_report_error(DIAG_ERROR_SETTINGS_LOAD);
         /*
          * Settings may have been partially loaded.
          * Restore safe RAM defaults.
          */
         memset(joya_app_id, 0, SIZE_APP_ID);
-        joya_is_in_emergency = false;
+        joya_emergency_phase = EMERGENCY_NONE;
         strcpy(joya_name, JOYA_ADV_NAME_DEFAULT);
 
         return err;
@@ -183,6 +190,7 @@ int storage_save_app_id(const uint8_t* new_app_id) {
 
     ret = settings_save_one("joya/app_id", joya_app_id, SIZE_APP_ID);
     if (ret != 0) {
+        diagnostics_report_error(DIAG_ERROR_FLASH_WRITE);
         /*
          * Non-critical error: continue with RAM defaults.
          */
@@ -192,16 +200,22 @@ int storage_save_app_id(const uint8_t* new_app_id) {
     return 0;
 }
 
-int storage_save_emergency_state(bool is_active)
+int storage_save_emergency_phase(emergency_phase_t phase)
 {
-    joya_is_in_emergency = is_active;
+    if (phase != EMERGENCY_NONE && phase != EMERGENCY_PENDING_ACK &&
+        phase != EMERGENCY_ACKED) {
+        return -EINVAL;
+    }
+    joya_emergency_phase = phase;
 
     if (!storage_persistent_available) {
         return 1; // Return an error code indicating that flash is not available
     }
 
-    int ret = settings_save_one("joya/emergency", &joya_is_in_emergency, sizeof(joya_is_in_emergency));
+    uint8_t stored = (uint8_t)phase;
+    int ret = settings_save_one("joya/emergency", &stored, sizeof(stored));
     if (ret != 0) {
+        diagnostics_report_error(DIAG_ERROR_FLASH_WRITE);
         /*
          * Non-critical error: continue with RAM defaults.
          */
@@ -235,6 +249,7 @@ int storage_save_name(const char *name)
                                 len + 1);
 
     if (ret != 0) {
+        diagnostics_report_error(DIAG_ERROR_FLASH_WRITE);
         return 1;
     }
 
@@ -251,7 +266,7 @@ int storage_factory_reset(void)
      * Clear RAM state first, regardless of Flash availability.
      */
     memset(joya_app_id, 0, sizeof(joya_app_id));
-    joya_is_in_emergency = false;
+    joya_emergency_phase = EMERGENCY_NONE;
     strcpy(joya_name, JOYA_ADV_NAME_DEFAULT);
 
     if (!storage_persistent_available) {

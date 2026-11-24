@@ -6,6 +6,7 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
+#include "ibeacon_policy.h"
 #include "app_state.h"
 #include "app_comm.h"
 
@@ -24,6 +25,7 @@
 // JOYA CONFIGURATION SERVICE
 #define BT_UUID_JOYA_CONFIG_SERVICE_VAL         BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585200)
 #define BT_UUID_JOYA_NAME_VAL                   BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585201)
+#define BT_UUID_JOYA_DIAGNOSTICS_VAL            BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585202)
 
 // JOYA BATTERY SERVICE: change = 0/1/2; measurement = battery voltage in mV
 #define BT_UUID_JOYA_BATTERY_SERVICE_VAL        BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585300)
@@ -39,6 +41,10 @@ bool ble_is_current_conn(struct bt_conn *conn);
 bool ble_has_connection(void);
 bool ble_is_authenticated_conn(struct bt_conn *conn);
 bool ble_mark_authenticated_conn(struct bt_conn *conn);
+/* Diagnostics transport: zero means no authenticated subscribed session. */
+uint32_t ble_diagnostics_session(void);
+void ble_diagnostics_notify_for_session(uint32_t session,
+                                        const uint8_t *data, uint16_t len);
 
 /**
  * @brief Send a secure event to the mobile app.
@@ -63,6 +69,9 @@ int ble_send_battery_measurement(int32_t voltage_mv);
  * @return 0 on success, or a negative error code on failure.
  */
 int ble_start_setup_advertising(bool is_new_connection);
+
+/* Applies the FSM-selected identity only while connectable advertising is active. */
+int ble_set_ibeacon_mode(ble_ibeacon_mode_t mode);
 
 
 /**
