@@ -6,8 +6,10 @@
 #include "battery.h"
 #include "test_image_guard.h"
 #include "diagnostics.h"
+#include "wdt_guard.h"
 
 int main(void) {
+    bool watchdog_active = wdt_guard_init();
     bool ota_test_boot = !boot_is_img_confirmed();
 
     int ret ;
@@ -39,14 +41,19 @@ int main(void) {
         ret = ble_driver_init();
         diagnostics_record_init(DIAG_INIT_BLE, ret);
         if (ret != 0) {
-            // BLE driver initialization failed
-            return -1;
+            /* The guard never feeds before main_ready. With WDT running,
+             * sleep until its hardware reset; otherwise retry after a delay.
+             */
+            if (!watchdog_active) {
+                k_sleep(K_SECONDS(30));
+                sys_reboot(SYS_REBOOT_COLD);
+            }
+            k_sleep(K_FOREVER);
         }
         ret = button_init();
         diagnostics_record_init(DIAG_INIT_BUTTON, ret);
         if (ret != 0) {
-            // Button initialization failed
-            return -1;
+            /* BLE is initialized; continue without button gestures. */
         }
     }
 
@@ -72,6 +79,7 @@ int main(void) {
     }
     diagnostics_record_init(DIAG_INIT_BATTERY, ret);
     diagnostics_finish_init();
+    wdt_guard_main_ready();
     
     // LOG: Initialization complete
 

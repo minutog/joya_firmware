@@ -41,8 +41,6 @@ static const struct bt_le_adv_param joya_adv_param = {
 
 /* Both identities use the same legacy advertising set. The final byte is a
  * placeholder measured-power value until it is calibrated on hardware.
- * UUIDs: a407e00a-00c1-464d-9173-2cb8be585401 (CONNECTION)
- *        a407e00a-00c1-464d-9173-2cb8be585402 (EMERGENCY)
  */
 static const struct bt_le_adv_param ibeacon_adv_param = {
     .options = 0, /* Legacy, non-connectable, non-scannable. */
@@ -55,8 +53,7 @@ static const struct bt_data connection_ibeacon_ad[] = {
     BT_DATA_BYTES(BT_DATA_FLAGS, BT_LE_AD_NO_BREDR),
     BT_DATA_BYTES(BT_DATA_MANUFACTURER_DATA,
                   0x4c, 0x00, 0x02, 0x15,
-                  0xa4, 0x07, 0xe0, 0x0a, 0x00, 0xc1, 0x46, 0x4d,
-                  0x91, 0x73, 0x2c, 0xb8, 0xbe, 0x58, 0x54, 0x01,
+                  JOYA_IBEACON_CONNECTION_UUID_BYTES,
                   0x00, 0x01, 0x00, 0x01, 0xc8),
 };
 
@@ -64,9 +61,8 @@ static const struct bt_data emergency_ibeacon_ad[] = {
     BT_DATA_BYTES(BT_DATA_FLAGS, BT_LE_AD_NO_BREDR),
     BT_DATA_BYTES(BT_DATA_MANUFACTURER_DATA,
                   0x4c, 0x00, 0x02, 0x15,
-                  0xa4, 0x07, 0xe0, 0x0a, 0x00, 0xc1, 0x46, 0x4d,
-                  0x91, 0x73, 0x2c, 0xb8, 0xbe, 0x58, 0x54, 0x02,
-                  0x00, 0x02, 0x00, 0x01, 0xc8),
+                  JOYA_IBEACON_EMERGENCY_UUID_BYTES,
+                  0x00, 0x01, 0x00, 0x01, 0xc8),
 };
 
 static struct bt_le_ext_adv *ibeacon_adv;

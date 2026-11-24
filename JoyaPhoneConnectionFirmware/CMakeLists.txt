@@ -26,6 +26,8 @@ target_sources(app PRIVATE
     src/emergency_phase.c
     src/diagnostics.c
     src/battery.c
+    src/wdt_guard.c
+    src/fatal_recovery.c
 )
 
 target_sources_ifdef(CONFIG_JOYA_HAPTICS_TEST_INDICATOR app PRIVATE

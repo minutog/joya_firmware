@@ -2,6 +2,7 @@
 #include "battery.h"
 #include "ota_access.h"
 #include "diagnostics.h"
+#include "wdt_guard.h"
 #include <errno.h>
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/sys/reboot.h>
@@ -24,6 +25,11 @@ static int test_setup_result;
 static volatile app_state_t current_state = STATE_UNPAIRED;
 /** @brief Message queue for events */
 K_MSGQ_DEFINE(event_queue, sizeof(app_event_t), 20, 4);
+
+unsigned int app_state_pending_events(void)
+{
+    return k_msgq_num_used_get(&event_queue);
+}
 
 /** @brief Thread for the finite state machine */
 K_THREAD_DEFINE(fsm_thread_id, 4098, fsm_thread_loop, NULL, NULL, NULL, 5, 0, 0);
@@ -303,7 +309,9 @@ void fsm_thread_loop(void) {
     app_event_t entry;
     while (1) {
         k_msgq_get(&event_queue, &entry, K_FOREVER);
+        wdt_guard_fsm_event_begin();
         process_event(&entry);
+        wdt_guard_fsm_event_end();
         if (entry.conn) {
             bt_conn_unref(entry.conn);
         }

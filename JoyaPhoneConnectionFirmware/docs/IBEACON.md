@@ -8,8 +8,8 @@ Location can monitor each UUID separately.
 
 | Identity | Proximity UUID | Major | Minor |
 | --- | --- | ---: | ---: |
-| CONNECTION | `a407e00a-00c1-464d-9173-2cb8be585401` | 1 (`0x0001`) | 1 (`0x0001`) |
-| EMERGENCY | `a407e00a-00c1-464d-9173-2cb8be585402` | 2 (`0x0002`) | 1 (`0x0001`) |
+| CONNECTION | `a407e00a-00c1-464d-9173-2cb8be586001` | 1 (`0x0001`) | 1 (`0x0001`) |
+| EMERGENCY | `a407e00a-00c1-464d-9173-2cb8be586002` | 1 (`0x0001`) | 1 (`0x0001`) |
 
 Manufacturer ID is Apple `0x004c`; iBeacon type and length are `0x02, 0x15`.
 The measured-power byte is currently `0xc8` (-56 dBm) for both identities. It

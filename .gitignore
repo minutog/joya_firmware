@@ -4,8 +4,10 @@
 
 # Zephyr / Nordic build outputs
 JoyaPhoneConnectionFirmware/zephyr_base/
+**/hci_no_flow.overlay
 **/build/
 **/build_joya/
+**/build_*
 **/.west/
 *.hex
 *.elf
@@ -25,3 +27,5 @@ JoyaPhoneConnectionFirmware/docker/JLink_Linux_*.deb
 
 # Others
 JoyaPhoneConnectionFirmware/docs/private_notes.md
+JoyaPhoneConnectionFirmware/otros/
+JoyaPhoneConnectionFirmware/ota/

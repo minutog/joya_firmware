@@ -32,6 +32,15 @@
 #define BT_UUID_JOYA_BATTERY_CHANGE_VAL         BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585301)
 #define BT_UUID_JOYA_BATTERY_MEASUREMENT_VAL    BT_UUID_128_ENCODE(0xa407e00a, 0x00c1, 0x464d, 0x9173, 0x2cb8be585302)
 
+// JOYA IBEACONS: manufacturer data uses UUID bytes in displayed (network) order.
+// BT_UUID_128_ENCODE() uses the reversed byte order required by Zephyr BLE UUIDs.
+#define JOYA_IBEACON_CONNECTION_UUID_BYTES \
+    0xa4, 0x07, 0xe0, 0x0a, 0x00, 0xc1, 0x46, 0x4d, \
+    0x91, 0x73, 0x2c, 0xb8, 0xbe, 0x58, 0x60, 0x01
+#define JOYA_IBEACON_EMERGENCY_UUID_BYTES \
+    0xa4, 0x07, 0xe0, 0x0a, 0x00, 0xc1, 0x46, 0x4d, \
+    0x91, 0x73, 0x2c, 0xb8, 0xbe, 0x58, 0x60, 0x02
+
 /**
  * @brief Initialize the Bluetooth stack.
  * @return 0 on success, or a negative error code on failure.

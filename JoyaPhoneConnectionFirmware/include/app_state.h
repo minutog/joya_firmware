@@ -98,6 +98,9 @@ void fsm_thread_loop(void);
 int add_event(event_type_t event);
 int add_event_for_conn(event_type_t event, struct bt_conn *conn, const uint8_t *app_id);
 
+/** Number of events waiting for the FSM thread. */
+unsigned int app_state_pending_events(void);
+
 /**
  * @brief Get the current application state.
  * @return The current application state.
