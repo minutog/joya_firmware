@@ -3,15 +3,6 @@
 /**
  * BLE CALLBACKS
  */
-void on_ccc_changed_handler(const struct bt_gatt_attr *attr, uint16_t value) {
-    if(value == BT_GATT_CCC_NOTIFY){
-        add_event(EV_BLE_NOTIFY_ENABLED);
-    } else {
-        // (improvement): handle notification disabled event if needed
-    }
-    return;
-}
-
 ssize_t on_rx_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                            const void *buf, uint16_t len, uint16_t offset, uint8_t flags){
 
@@ -29,26 +20,21 @@ ssize_t on_rx_write_handler(struct bt_conn *conn, const struct bt_gatt_attr *att
     event_type_t ev;
     if (val == COMMAND_STOP_EMERGENCY) {
         ev = EV_APP_STOP_EMERGENCY;
-        add_event(ev);
     } else if (val == COMMAND_ACK_EMERGENCY) {
         ev = EV_APP_ACK_EMERGENCY;
-        add_event(ev);
     } else if (val == COMMAND_FOLLOW_ME) {
         ev = EV_APP_FOLLOW_ME;
-        add_event(ev);
     } else if (val == COMMAND_FRIEND_EMERGENCY) {
         ev = EV_APP_FRIEND_EMERGENCY;
-        add_event(ev);
     } else if (val == COMMAND_OTA_ENABLE) {
-        if (add_event_for_conn(EV_APP_OTA_ENABLE, conn, NULL) != 0) {
-            return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
-        }
+        ev = EV_APP_OTA_ENABLE;
     } else if (val == COMMAND_OTA_DISABLE) {
-        if (add_event_for_conn(EV_APP_OTA_DISABLE, conn, NULL) != 0) {
-            return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
-        }
+        ev = EV_APP_OTA_DISABLE;
     } else {
-        // (improvement): handle unknown command if needed
+        return len;
+    }
+    if (add_event_for_conn(ev, conn, NULL) != 0) {
+        return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
     }
     
     return len;

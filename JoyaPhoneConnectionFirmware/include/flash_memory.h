@@ -40,6 +40,9 @@ int storage_factory_reset(void);
 /** Update the emergency phase in RAM and persist it when flash is available. */
 int storage_save_emergency_phase(emergency_phase_t phase);
 emergency_phase_t storage_get_emergency_phase(void);
+uint8_t storage_get_pending_routine(void);
+/* RAM changes first. Return 1 when the flash update fails. */
+int storage_save_pending_routine(uint8_t command);
 
 /**
  * @brief Check whether emergency mode is active.

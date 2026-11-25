@@ -39,7 +39,7 @@ static const struct bt_le_adv_param joya_adv_param = {
 	.peer = NULL,
 };
 
-/* Both identities use the same legacy advertising set. The final byte is a
+/* The connection iBeacon uses a legacy advertising set. The final byte is a
  * placeholder measured-power value until it is calibrated on hardware.
  */
 static const struct bt_le_adv_param ibeacon_adv_param = {
@@ -57,17 +57,8 @@ static const struct bt_data connection_ibeacon_ad[] = {
                   0x00, 0x01, 0x00, 0x01, 0xc8),
 };
 
-static const struct bt_data emergency_ibeacon_ad[] = {
-    BT_DATA_BYTES(BT_DATA_FLAGS, BT_LE_AD_NO_BREDR),
-    BT_DATA_BYTES(BT_DATA_MANUFACTURER_DATA,
-                  0x4c, 0x00, 0x02, 0x15,
-                  JOYA_IBEACON_EMERGENCY_UUID_BYTES,
-                  0x00, 0x01, 0x00, 0x01, 0xc8),
-};
-
 static struct bt_le_ext_adv *ibeacon_adv;
 static bool ibeacon_running;
-static ble_ibeacon_mode_t ibeacon_payload_mode;
 /* Mirrors successful legacy start/stop operations and the one-time connection stop. */
 static atomic_t connectable_adv_running;
 static K_MUTEX_DEFINE(ibeacon_mutex);
@@ -94,10 +85,7 @@ static int ibeacon_stop(void)
 int ble_set_ibeacon_mode(ble_ibeacon_mode_t mode)
 {
     int err = 0;
-    const struct bt_data *payload;
-    size_t payload_len;
-
-    if (mode > BLE_IBEACON_EMERGENCY) {
+    if (mode > BLE_IBEACON_CONNECTION) {
         return -EINVAL;
     }
 
@@ -114,28 +102,8 @@ int ble_set_ibeacon_mode(ble_ibeacon_mode_t mode)
         goto out;
     }
 
-    if (ibeacon_running && ibeacon_payload_mode == mode) {
-        goto out;
-    }
     if (ibeacon_running) {
-        err = bt_le_ext_adv_stop(ibeacon_adv);
-        if (err != 0 && err != -EALREADY) {
-            goto out;
-        }
-        ibeacon_running = false;
-    }
-
-    payload = mode == BLE_IBEACON_EMERGENCY ? emergency_ibeacon_ad :
-                                               connection_ibeacon_ad;
-    payload_len = mode == BLE_IBEACON_EMERGENCY ?
-                  ARRAY_SIZE(emergency_ibeacon_ad) :
-                  ARRAY_SIZE(connection_ibeacon_ad);
-    if (ibeacon_payload_mode != mode) {
-        err = bt_le_ext_adv_set_data(ibeacon_adv, payload, payload_len, NULL, 0);
-        if (err != 0) {
-            goto out;
-        }
-        ibeacon_payload_mode = mode;
+        goto out;
     }
     if (atomic_get(&connectable_adv_running) && !ble_has_connection()) {
         err = bt_le_ext_adv_start(ibeacon_adv, BT_LE_EXT_ADV_START_DEFAULT);
@@ -186,13 +154,21 @@ static K_MUTEX_DEFINE(conn_mutex);
  */
 
 static void on_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value) {
+    ARG_UNUSED(attr);
     bool enabled = (value == BT_GATT_CCC_NOTIFY);
+    struct bt_conn *conn = NULL;
 
     k_mutex_lock(&conn_mutex, K_FOREVER);
     notify_enabled = enabled;
+    if (enabled && current_conn) {
+        conn = bt_conn_ref(current_conn);
+    }
     k_mutex_unlock(&conn_mutex);
-        
-    on_ccc_changed_handler(attr, value);
+
+    if (conn) {
+        (void)add_event_for_conn(EV_BLE_NOTIFY_ENABLED, conn, NULL);
+        bt_conn_unref(conn);
+    }
 }
 
 static void on_battery_change_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
@@ -389,19 +365,15 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 /** @brief Get a reference to the current connection.
  * @return A reference to the current connection, or NULL if not connected or notifications are not enabled.
  */
-static struct bt_conn *get_current_conn_ref(void)
+static struct bt_conn *get_authenticated_conn_ref(void)
 {
-	struct bt_conn *conn = NULL;
-
-	k_mutex_lock(&conn_mutex, K_FOREVER);
-
-	if (current_conn && notify_enabled) {
-		conn = bt_conn_ref(current_conn);
-	}
-
-	k_mutex_unlock(&conn_mutex);
-
-	return conn;
+    struct bt_conn *conn = NULL;
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    if (current_conn && current_conn_authenticated && notify_enabled) {
+        conn = bt_conn_ref(current_conn);
+    }
+    k_mutex_unlock(&conn_mutex);
+    return conn;
 }
 
 static struct bt_conn *get_battery_conn_ref(bool measurement)
@@ -409,8 +381,9 @@ static struct bt_conn *get_battery_conn_ref(bool measurement)
     struct bt_conn *conn = NULL;
 
     k_mutex_lock(&conn_mutex, K_FOREVER);
-    if (current_conn && (measurement ? battery_measurement_notify_enabled :
-                                      battery_change_notify_enabled)) {
+    if (current_conn && current_conn_authenticated &&
+        (measurement ? battery_measurement_notify_enabled :
+                       battery_change_notify_enabled)) {
         conn = bt_conn_ref(current_conn);
     }
     k_mutex_unlock(&conn_mutex);
@@ -493,7 +466,7 @@ static const struct bt_data ad[] = {
 };
 
 /**
- * @brief Sends a notification to the mobile app (wrapper: ble_send_event_secure).
+ * @brief Sends a command notification to the mobile app.
  * @param event_byte The 1-byte code to send.
  * @return 0 on success, or a negative error code on failure.
  */
@@ -539,7 +512,6 @@ int ble_driver_init(void) {
         ibeacon_adv = NULL;
         return err;
     }
-    ibeacon_payload_mode = BLE_IBEACON_CONNECTION;
     
     return 0;
 }
@@ -584,6 +556,16 @@ bool ble_mark_authenticated_conn(struct bt_conn *conn)
         diagnostics_request_init_notification();
     }
     return valid;
+}
+
+bool ble_commands_subscribed_for_conn(struct bt_conn *conn)
+{
+    bool ready;
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    ready = conn && current_conn == conn && notify_enabled;
+    k_mutex_unlock(&conn_mutex);
+    return ready && bt_gatt_is_subscribed(conn, &joya_commands_svc.attrs[2],
+                                          BT_GATT_CCC_NOTIFY);
 }
 
 uint32_t ble_diagnostics_session(void)
@@ -677,12 +659,31 @@ int ble_stop_advertising(void) {
 }
 
 
-int ble_send_event_secure(uint8_t event_byte) {
-    struct bt_conn *conn = get_current_conn_ref();
+int ble_send_event_for_conn(struct bt_conn *conn, uint8_t event_byte)
+{
+    struct bt_conn *send_conn = NULL;
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    if (conn && current_conn == conn && notify_enabled) {
+        send_conn = bt_conn_ref(conn);
+    }
+    k_mutex_unlock(&conn_mutex);
+    if (!send_conn) {
+        return -ENOTCONN;
+    }
+    int ret = ble_send_notify(send_conn, event_byte);
+    if (ret < 0) {
+        diagnostics_report_error(DIAG_ERROR_BLE);
+    }
+    bt_conn_unref(send_conn);
+    return ret;
+}
+
+int ble_send_event_authenticated(uint8_t event_byte)
+{
+    struct bt_conn *conn = get_authenticated_conn_ref();
     if (!conn) {
         return -ENOTCONN;
     }
-
     int ret = ble_send_notify(conn, event_byte);
     if (ret < 0) {
         diagnostics_report_error(DIAG_ERROR_BLE);

@@ -1,43 +1,34 @@
-# Joya iBeacon identities
+# Joya connection iBeacon
 
-Both identities use one legacy, non-connectable advertising set. The firmware
-selects the identity from the emergency phase only after a nonempty `app_id`
-has been registered, while the connectable advertiser is active and Joya is
-disconnected. Initial Setup and factory reset have no iBeacon. iOS Core
-Location can monitor each UUID separately.
+Joya emits the connection iBeacon alongside connectable advertising when an
+`APP_ID` is stored and the device is disconnected. Its UUID is
+`a407e00a-00c1-464d-9173-2cb8be586001`; major and minor are both 1.
+Manufacturer ID is Apple `0x004c`, iBeacon type and length are `0x02, 0x15`,
+and measured power remains the uncalibrated `0xc8` (-56 dBm).
 
-| Identity | Proximity UUID | Major | Minor |
-| --- | --- | ---: | ---: |
-| CONNECTION | `a407e00a-00c1-464d-9173-2cb8be586001` | 1 (`0x0001`) | 1 (`0x0001`) |
-| EMERGENCY | `a407e00a-00c1-464d-9173-2cb8be586002` | 1 (`0x0001`) | 1 (`0x0001`) |
+The iBeacon payload is independent of pending commands and the emergency phase.
+Initial setup without an `APP_ID`, a connected session, factory reset, suspended
+idle, and critical battery idle do not emit it. After a normal reboot with a
+stored `APP_ID`, advertising starts automatically once a noncritical battery
+level has been confirmed. A critical level at boot defers this until recovery.
 
-Manufacturer ID is Apple `0x004c`; iBeacon type and length are `0x02, 0x15`.
-The measured-power byte is currently `0xc8` (-56 dBm) for both identities. It
-is a placeholder and has not been calibrated for distance estimation.
+The mobile app should monitor only this connection UUID, connect to Joya,
+enable command TX notifications, and authenticate with `APP_ID`. Pending
+commands are delivered over the existing GATT characteristic after that point.
+An emergency (`0x04`) is retried until the app sends ACK (`0x41`); STOP (`0x42`)
+retains its existing meaning. For a routine ON (`0x02`) or OFF (`0x03`), Joya
+retains only the latest pending command and treats a successful
+`bt_gatt_notify()` call as delivery. The app may miss a notification accepted
+by BLE if the link drops, or receive a duplicate after a reboot between the
+notification and clearing the persisted pending state. There is no routine ACK.
+The stored routine is tied to the APP_ID that generated it; a different APP_ID
+after factory reset or firmware rollback cannot receive the old command.
 
-## nRF Connect validation
+## Validation with nRF Connect
 
-Filter by Apple manufacturer data and decode the UUID, major and minor. Also
-check that the usual connectable Joya advertisement is present wherever an
-iBeacon is expected.
-
-| Action | Expected iBeacon |
-| --- | --- |
-| Start initial Setup without an `app_id` | None; connectable advertising only |
-| Register an `app_id`, then disconnect and restart advertising | CONNECTION |
-| Start Setup advertising while disconnected with an `app_id` | CONNECTION |
-| Triple click during initial Setup without an `app_id` | None; connectable advertising only |
-| Triple click while disconnected with an `app_id` and connectable advertising active | EMERGENCY |
-| Connect | None; emergency on a connected device uses GATT `0x04` |
-| Triple click while connected | None; GATT `0x04` is sent and retried |
-| Disconnect before ACK and wait for advertising restart | EMERGENCY |
-| Reconnect before ACK | None; GATT `0x04` resumes after authentication |
-| Disconnect again without ACK | EMERGENCY |
-| Reconnect and send ACK `0x41`, then disconnect | CONNECTION |
-| Trigger a new emergency, send STOP `0x42`, then disconnect | CONNECTION |
-| Factory reset and start initial Setup again | None; connectable advertising only |
-| Let ordinary Setup advertising time out without an emergency | None |
-
-The existing emergency-specific timeout branch restarts connectable
-advertising; it is not changed by this integration. The iBeacon follows that
-advertising when it is active.
+Check that both connectable advertising and the connection iBeacon are visible
+after a configured, noncritical reboot and after a normal disconnect. Triggering
+an emergency must leave the iBeacon UUID unchanged. Verify that neither
+advertisement appears during critical idle or suspension, and that initial
+setup without an `APP_ID` has only connectable advertising after the setup
+gesture.

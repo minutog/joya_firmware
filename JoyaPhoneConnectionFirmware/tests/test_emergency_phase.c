@@ -12,6 +12,8 @@ int main(void)
     phase = emergency_phase_transition(phase, EMERGENCY_TRIGGER);
     assert(phase == EMERGENCY_PENDING_ACK);
     assert(emergency_phase_needs_notification(phase));
+    assert(emergency_phase_transition(phase, EMERGENCY_TRIGGER) ==
+           EMERGENCY_PENDING_ACK); /* Repeated trigger is one pending alert. */
 
     /* Disconnect leaves the persisted phase untouched; reconnect resumes 0x04. */
     emergency_phase_t after_disconnect = phase;
@@ -52,19 +54,19 @@ int main(void)
     phase = emergency_phase_transition(EMERGENCY_ACKED, EMERGENCY_TRIGGER);
     assert(phase == EMERGENCY_PENDING_ACK);
 
-    /* Initial Setup has no beacon, even when an emergency is pending. */
-    assert(ibeacon_mode_for_state(false, EMERGENCY_NONE) == BLE_IBEACON_OFF);
-    assert(ibeacon_mode_for_state(false, EMERGENCY_PENDING_ACK) == BLE_IBEACON_OFF);
-    assert(ibeacon_mode_for_state(false, EMERGENCY_ACKED) == BLE_IBEACON_OFF);
+    /* Beacon identity depends only on registration, never on commands. */
+    assert(ibeacon_mode_for_state(false) == BLE_IBEACON_OFF);
 
     /* Registration and factory reset change eligibility during execution. */
     bool has_app_id = false;
-    assert(ibeacon_mode_for_state(has_app_id, phase) == BLE_IBEACON_OFF);
+    assert(ibeacon_mode_for_state(has_app_id) == BLE_IBEACON_OFF);
     has_app_id = true;
-    assert(ibeacon_mode_for_state(has_app_id, phase) == BLE_IBEACON_EMERGENCY);
-    assert(ibeacon_mode_for_state(has_app_id, EMERGENCY_NONE) == BLE_IBEACON_CONNECTION);
-    assert(ibeacon_mode_for_state(has_app_id, EMERGENCY_ACKED) == BLE_IBEACON_CONNECTION);
+    assert(ibeacon_mode_for_state(has_app_id) == BLE_IBEACON_CONNECTION);
+    phase = emergency_phase_transition(phase, EMERGENCY_ACK);
+    assert(ibeacon_mode_for_state(has_app_id) == BLE_IBEACON_CONNECTION);
+    phase = emergency_phase_transition(phase, EMERGENCY_STOP);
+    assert(ibeacon_mode_for_state(has_app_id) == BLE_IBEACON_CONNECTION);
     has_app_id = false;
-    assert(ibeacon_mode_for_state(has_app_id, phase) == BLE_IBEACON_OFF);
+    assert(ibeacon_mode_for_state(has_app_id) == BLE_IBEACON_OFF);
     return 0;
 }

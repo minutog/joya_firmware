@@ -22,13 +22,6 @@ int save_received_app_id(const uint8_t *received_app_id);
 int check_app_id(const uint8_t *received_app_id, const uint8_t *saved_app_id);
 
 /**
- * @brief Handle CCC (Client Characteristic Configuration) changes.
- * @param attr The GATT attribute.
- * @param value The new CCC value.
- */
-void on_ccc_changed_handler(const struct bt_gatt_attr *attr, uint16_t value);
-
-/**
  * @brief Handle writes to the RX characteristic.
  * @param conn The Bluetooth connection.
  * @param attr The GATT attribute.
