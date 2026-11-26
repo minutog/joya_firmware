@@ -125,6 +125,9 @@ int main(void)
     assert(storage_init() == 0);
     assert(storage_save_app_id(app_id) == 0);
     assert(storage_save_pending_routine(COMMAND_ROUTINE) == 0);
+    assert(storage_get_pending_routine() == COMMAND_ROUTINE);
+    assert(storage_init() == 0); /* Disconnected ON survives a reboot. */
+    assert(storage_get_pending_routine() == COMMAND_ROUTINE);
     int after_on = writes;
     assert(storage_save_pending_routine(COMMAND_ROUTINE) == 0);
     assert(writes == after_on);
@@ -177,5 +180,9 @@ int main(void)
     assert(storage_init() == 0);
     assert(storage_get_pending_routine() == 0);
     assert(memcmp(storage_get_app_id(), new_app_id, SIZE_APP_ID) == 0);
+    fail_routine_write = true;
+    assert(storage_save_pending_routine(COMMAND_ROUTINE) == 1);
+    assert(storage_get_pending_routine() == COMMAND_ROUTINE);
+    fail_routine_write = false;
     return 0;
 }

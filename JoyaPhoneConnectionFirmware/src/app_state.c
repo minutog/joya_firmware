@@ -15,6 +15,7 @@ uint8_t current_retry_index = 0;
 
 static struct k_work_delayable connection_timeout_work;
 static struct k_work_delayable emergency_retry_work;
+static struct k_work_delayable auth_delivery_retry_work;
 static struct k_work_delayable advertising_restart_work;
 static struct k_work_delayable critical_window_work;
 #define CRITICAL_WINDOW_MS (5 * 60 * 1000)
@@ -43,6 +44,7 @@ static bool critical_idle;
 static bool critical_window_open;
 static bool boot_battery_seen;
 static bool boot_reconnect_pending;
+static bool auth_ack_pending;
 static int64_t critical_window_deadline_ms;
 static int battery_level = -1;
 
@@ -228,6 +230,19 @@ static void emergency_restart_alerts(void)
     emergency_schedule_next_retry();
 }
 
+static void play_routine_haptic(uint8_t command)
+{
+    haptics_play(command == COMMAND_ROUTINE ? HAPTICS_PATTERN_ROUTINE_START :
+                                            HAPTICS_PATTERN_ROUTINE_CANCEL);
+}
+
+static void schedule_auth_delivery_retry(int ret)
+{
+    if (ret != -ENOTCONN) {
+        (void)k_work_reschedule(&auth_delivery_retry_work, K_MSEC(200));
+    }
+}
+
 static void send_pending_routine(void)
 {
     uint8_t command = storage_get_pending_routine();
@@ -235,10 +250,16 @@ static void send_pending_routine(void)
         is_in_emergency()) {
         return;
     }
-    if (ble_send_event_authenticated(command) == 0) {
+    int ret = ble_send_event_authenticated(command);
+    if (ret == 0) {
+        play_routine_haptic(command);
         if (storage_save_pending_routine(0) != 0) {
             diagnostics_report_error(DIAG_ERROR_FLASH_WRITE);
         }
+    } else {
+        /* An ACK and other notifications may temporarily exhaust TX buffers.
+         * Retry without another command from the app. */
+        schedule_auth_delivery_retry(ret);
     }
 }
 
@@ -254,19 +275,31 @@ static void send_pending_after_auth(void)
 
 static void handle_routine_button(uint8_t command)
 {
-    if (pending_routine_next(storage_get_pending_routine(), command,
+    uint8_t previous = storage_get_pending_routine();
+    if (pending_routine_next(previous, command,
                              !is_app_id_empty(), is_in_emergency()) != command) {
         return;
     }
-    haptics_play(command == COMMAND_ROUTINE ? HAPTICS_PATTERN_ROUTINE_START :
-                                            HAPTICS_PATTERN_ROUTINE_CANCEL);
-    if (current_state == STATE_AUTHENTICATED &&
-        ble_send_event_authenticated(command) == 0) {
+    int ret = current_state == STATE_AUTHENTICATED ?
+              ble_send_event_authenticated(command) : -ENOTCONN;
+    if (ret == 0) {
+        play_routine_haptic(command);
         if (storage_save_pending_routine(0) != 0) {
             diagnostics_report_error(DIAG_ERROR_FLASH_WRITE);
         }
-    } else if (storage_save_pending_routine(command) != 0) {
-        diagnostics_report_error(DIAG_ERROR_FLASH_WRITE);
+    } else {
+        if (storage_save_pending_routine(command) != 0) {
+            diagnostics_report_error(DIAG_ERROR_FLASH_WRITE);
+        }
+        schedule_auth_delivery_retry(ret);
+    }
+}
+
+static void auth_delivery_retry_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+    if (add_event(EV_AUTH_DELIVERY_RETRY) != 0) {
+        (void)k_work_reschedule(&auth_delivery_retry_work, K_MSEC(200));
     }
 }
 
@@ -355,6 +388,8 @@ int add_event_for_conn(event_type_t event, struct bt_conn *conn, const uint8_t *
 
 void fsm_thread_loop(void) {
     k_work_init_delayable(&emergency_retry_work, emergency_retry_work_handler);
+    k_work_init_delayable(&auth_delivery_retry_work,
+                          auth_delivery_retry_work_handler);
     k_work_init_delayable(&connection_timeout_work, connection_timeout_work_handler);
     k_work_init_delayable(&advertising_restart_work, advertising_restart_work_handler);
     k_work_init_delayable(&critical_window_work, critical_window_work_handler);
@@ -487,7 +522,32 @@ void process_event(const app_event_t *entry) {
 
     if (event == EV_BLE_NOTIFY_ENABLED &&
         current_state == STATE_AUTHENTICATED) {
+        if (auth_ack_pending) {
+            ret = ble_send_event_for_conn(entry->conn, COMMAND_ACK);
+            auth_ack_pending = ret != 0;
+            if (ret != 0) {
+                schedule_auth_delivery_retry(ret);
+                return;
+            }
+        }
         send_pending_after_auth();
+        return;
+    }
+
+    if (event == EV_AUTH_DELIVERY_RETRY) {
+        if (current_state == STATE_AUTHENTICATED) {
+            if (auth_ack_pending) {
+                ret = ble_send_event_authenticated(COMMAND_ACK);
+                if (ret != 0) {
+                    schedule_auth_delivery_retry(ret);
+                    return;
+                }
+                auth_ack_pending = false;
+                send_pending_after_auth();
+            } else {
+                send_pending_routine();
+            }
+        }
         return;
     }
 
@@ -567,6 +627,7 @@ void process_event(const app_event_t *entry) {
     }
 
     if (event == EV_BLE_CONNECTED) {
+        auth_ack_pending = false;
         boot_reconnect_pending = false;
         (void)k_work_cancel_delayable(&advertising_restart_work);
         (void)ble_set_ibeacon_mode(BLE_IBEACON_OFF);
@@ -596,6 +657,8 @@ void process_event(const app_event_t *entry) {
     }
 
     if (event == EV_BLE_DISCONNECTED) {
+        (void)k_work_cancel_delayable(&auth_delivery_retry_work);
+        auth_ack_pending = false;
         if (critical_window_open) {
             current_state = is_app_id_empty() ? STATE_SETUP_MODE :
                                                 STATE_BONDED_DISCONNECTED;
@@ -907,17 +970,18 @@ void process_event(const app_event_t *entry) {
             break;
 
         case STATE_WAITING_NOTIFICATION_ENABLE:
-            /*
-            * Protocol contract: the app must enable notifications before sending
-            * APP_ID. Identifier events received in this state are intentionally not
-            * handled; the app must resend APP_ID after the firmware reaches
-            * STATE_SETUP_WAITING_IDENTIFIER.
-            */
             if (event == EV_BLE_NOTIFY_ENABLED) {
                 // LOG: Notifications enabled - waiting for APP_ID
                 current_state = STATE_SETUP_WAITING_IDENTIFIER;
+                break;
             }
-            break;
+            if (event != EV_APP_IDENTIFIER_RECEIVED) {
+                break;
+            }
+            /* APP_ID can arrive before TX CCC. Authentication proceeds, and the
+             * pending routine will be retried when TX is enabled. */
+            current_state = STATE_SETUP_WAITING_IDENTIFIER;
+            __fallthrough;
 
         case STATE_SETUP_WAITING_IDENTIFIER:
             if(event == EV_APP_IDENTIFIER_RECEIVED){
@@ -942,13 +1006,18 @@ void process_event(const app_event_t *entry) {
                     }
                     // It is safe to send because it is already authenticated
                     ret = ble_send_event_for_conn(entry->conn, COMMAND_ACK);
+                    auth_ack_pending = ret != 0;
+                    if (ret != 0) {
+                        schedule_auth_delivery_retry(ret);
+                    }
                     if(ret != 0){
                         // LOG: Failed to send ACK - continuing without sending
                     }
-                    notify_current_battery_level();
-
                     haptics_play(HAPTICS_PATTERN_ACK_CONNECTION);
-                    send_pending_after_auth();
+                    if (ret == 0) {
+                        send_pending_after_auth();
+                    }
+                    notify_current_battery_level();
                     return;
                     
                 } else {
@@ -964,12 +1033,18 @@ void process_event(const app_event_t *entry) {
                             return;
                         }
                         ret = ble_send_event_for_conn(entry->conn, COMMAND_ACK);
+                        auth_ack_pending = ret != 0;
+                        if (ret != 0) {
+                            schedule_auth_delivery_retry(ret);
+                        }
                         if(ret != 0){
                             // LOG: Failed to send ACK - continuing without sending
                         }
+                        if (ret == 0) {
+                            send_pending_after_auth();
+                        }
                         notify_current_battery_level();
-                        send_pending_after_auth();
-                        haptics_play(HAPTICS_PATTERN_ACK_CONNECTION);
+                        //haptics_play(HAPTICS_PATTERN_ACK_CONNECTION);
                         return;
                     } else {
                         // LOG: APP_ID does not match stored APP_ID - sending NACK
